@@ -107,9 +107,11 @@ describe.concurrent('concurrent', () => {
 
     const firstConcurrent = concurrent(2, processFn1);
     const secondConcurrent = concurrent(3, processFn2);
+    var calledTimes = 0;
     async function* generateItems() {
       for (let i = 1; i <= 14; i++) {
         yield i;
+        calledTimes++;
       }
     }
     const items = generateItems();
@@ -123,10 +125,10 @@ describe.concurrent('concurrent', () => {
         break;
       }
     }
-
     // Each function should be called once for each input
     expect(processFn2).toHaveBeenCalledTimes(7); // Step 2 kept its buffer filled, so 2 more items were processed
     expect(processFn1).toHaveBeenCalledTimes(8); // Step 2 requested for 2 more items, and then step 1 also eagerly produced 1 more
+    expect(calledTimes).toBe(7); // input generator produced 7  values
 
     const duration = Date.now() - startTime;
 
