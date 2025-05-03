@@ -71,17 +71,103 @@ describe.concurrent('concurrent', () => {
 
     const concurrentProcess = concurrent(2, processFn);
 
-    const items = [1, 2, 3, 4];
+    const items = [1, 2, 3, 4, 5, 6, 7, 8];
     const results: number[] = [];
     const startTime = Date.now();
 
     for await (const result of concurrentProcess(items)) {
       results.push(result);
+      if (results.length == 4) {
+        break;
+      }
     }
 
     const duration = Date.now() - startTime;
     expect(duration).toBeLessThan(300); // Should take ~200ms with concurrency of 2
     expect(results.sort()).toEqual([2, 4, 6, 8]);
-    expect(processFn).toHaveBeenCalledTimes(4);
+    expect(processFn).toHaveBeenCalledTimes(5); // 4 real and  1 eagerly produced result
+  });
+
+  it.concurrent('should support composing concurrent operations', async () => {
+    // First processor doubles numbers with concurrency of 2
+    console.time('step1');
+    console.time('step2');
+    const processFn1 = vi.fn().mockImplementation(async (x: number) => {
+      console.timeLog('step1', x);
+      await delay(100);
+      return x * 2;
+    });
+
+    // Second processor adds 10 to numbers with concurrency of 3
+    const processFn2 = vi.fn().mockImplementation(async (x: number) => {
+      console.timeLog('step2', x);
+      await delay(100);
+      return x + 10;
+    });
+
+    const firstConcurrent = concurrent(2, processFn1);
+    const secondConcurrent = concurrent(3, processFn2);
+
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const results: number[] = [];
+    const startTime = Date.now();
+
+    // Chain the concurrent operations
+    for await (const result of secondConcurrent(firstConcurrent(items))) {
+      results.push(result);
+      if (results.length == 5) {
+        break;
+      }
+    }
+
+    // Each function should be called once for each input
+    expect(processFn2).toHaveBeenCalledTimes(7); // Step 2 kept its buffer filled, so 2 more items were processed
+    expect(processFn1).toHaveBeenCalledTimes(8); // Step 2 requested for 2 more items, and then step 1 also eagerly produced 1 more
+
+    const duration = Date.now() - startTime;
+
+    // With proper concurrency, this should complete in around 300ms
+    // (300ms for the first operation in 3 batches, 100ms for the second operation)
+    expect(duration).toBeLessThan(500);
+
+    // Items are first doubled, then have 10 added
+    expect(results).toEqual([12, 14, 16, 18, 20]);
+  });
+
+  it.concurrent('should respect concurrency limit with consumer backpressure', async () => {
+    // Track active concurrent operations
+    let activeOperations = 0;
+    let maxActiveOperations = 0;
+
+    // Create a processing function with tracking
+    const processFn = vi.fn().mockImplementation(async (x: number) => {
+      activeOperations++;
+      maxActiveOperations = Math.max(maxActiveOperations, activeOperations);
+
+      await delay(50); // Processor delay
+
+      activeOperations--;
+      return x * 2;
+    });
+
+    // Create concurrent processor with limit of 3
+    const concurrencyLimit = 3;
+    const concurrentProcess = concurrent(concurrencyLimit, processFn);
+
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const results: number[] = [];
+
+    // Consume with a delay (creating backpressure)
+    for await (const result of concurrentProcess(items)) {
+      results.push(result);
+      await delay(100); // Consumer delay (longer than processor delay)
+    }
+
+    // Verify the results
+    expect(results.length).toBe(10);
+    expect(processFn).toHaveBeenCalledTimes(10);
+
+    // Most important check: concurrency limit was respected
+    expect(maxActiveOperations).toBe(concurrencyLimit); // It should actually reach the limit
   });
 });

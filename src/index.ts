@@ -24,8 +24,6 @@ export const flatMap = Rt.flatMap.async;
 // Filters
 export const filter = Rt.filter.async;
 export const unique = Rt.unique.async;
-export const uniqueBy = Rt.uniqueBy.async;
-export const uniqueWith = Rt.uniqueWith.async;
 
 // Reducers
 export const find = Rt.find.async;
@@ -35,7 +33,6 @@ export const reduce = Rt.reduce.async;
 
 // Side Effectors
 export const forEach = Rt.forEach.async;
-export const peek = Rt.peek.async;
 
 // Splicers
 export const take = Rt.take.async;
@@ -48,14 +45,6 @@ export const flatten = Rt.flatten.async;
 export const accumulate = Rt.accumulate.async;
 export const buffer = Rt.buffer;
 export const serialize = Rt.serialize.async;
-
-// Groups
-export const difference = Rt.difference.async;
-export const differenceBy = Rt.differenceBy.async;
-export const differenceWith = Rt.differenceWith.async;
-export const intersection = Rt.intersection.async;
-export const intersectionBy = Rt.intersectionBy.async;
-export const intersectionWith = Rt.intersectionWith.async;
 
 // Composition utilities
 export const { pipe, compose } = Rt;

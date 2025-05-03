@@ -2,8 +2,8 @@
   "name": "@augceo/iterators",
   "version": "0.1.0",
   "description": "Concurrent iterator utilities for rotery",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "files": [
     "dist"
   ],
