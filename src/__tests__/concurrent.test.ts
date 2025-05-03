@@ -107,8 +107,12 @@ describe.concurrent('concurrent', () => {
 
     const firstConcurrent = concurrent(2, processFn1);
     const secondConcurrent = concurrent(3, processFn2);
-
-    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    async function* generateItems() {
+      for (let i = 1; i <= 14; i++) {
+        yield i;
+      }
+    }
+    const items = generateItems();
     const results: number[] = [];
     const startTime = Date.now();
 
