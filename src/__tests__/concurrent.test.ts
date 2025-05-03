@@ -132,7 +132,7 @@ describe.concurrent('concurrent', () => {
 
     const duration = Date.now() - startTime;
 
-    // With proper concurrency, this should complete in around 300ms
+    // With proper concurrency, this should complete in around 400ms
     // (300ms for the first operation in 3 batches, 100ms for the second operation)
     expect(duration).toBeLessThan(500);
 
