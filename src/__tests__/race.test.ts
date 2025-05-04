@@ -1,5 +1,27 @@
-import { describe, expect, it } from 'vitest';
-import { race } from '..';
+import { describe, expect, it, vitest } from 'vitest';
+import { concurrent, race } from '..';
+
+const trackConcurrency = (fn: (x: number) => Promise<number>) => {
+  const processed: number[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  const trackedFn = vitest.fn(async (x: number) => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+
+    const result = await fn(x);
+    processed.push(result);
+    inFlight--;
+    return result;
+  });
+
+  Object.defineProperty(trackedFn, 'maxInFlight', {
+    get: () => maxInFlight,
+  });
+
+  return trackedFn as typeof trackedFn & { maxInFlight: number };
+};
 
 // Helper to create a delay function
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -80,60 +102,441 @@ describe.concurrent('race', () => {
     expect(results).toEqual([11, 21, 12, 22, 13, 23, 14, 24]);
   });
 
-  it.concurrent('3 streams with buffer capacity 2', async () => {
-    // Create 3 streams with consistent delay but different values
-    const stream1 = createPromiseGenerator([11, 12, 13], 50); // Stream 1: first digit 1, second digit order
-    const stream2 = createPromiseGenerator([21, 22, 23, 24, 25], 50); // Stream 2: first digit 2, second digit order
-    const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
+  describe('Order', () => {
+    it.concurrent('should tap iterators eagerly', async () => {
+      // Create 3 streams with consistent delay but different values
+      const stream1 = createPromiseGenerator([11, 12, 13], 50); // Stream 1: first digit 1, second digit order
+      const stream2 = createPromiseGenerator([21, 22, 23, 24, 25], 50); // Stream 2: first digit 2, second digit order
+      const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
 
-    // up to 3 streams, up to 2 values in flight
-    const raceFunction = race<number>(3, 2);
-    const results: number[] = [];
+      // all 3 are allowed to tap
+      const raceFunction = race<number>(3, Infinity);
+      const results: number[] = [];
 
-    // Collect all values
-    for await (const value of raceFunction([stream1, stream2, stream3])) {
-      results.push(value);
-      console.log(value);
-    }
+      // Collect all values
+      for await (const value of raceFunction([stream1, stream2, stream3])) {
+        results.push(value);
+      }
 
-    // Verify that all values from all streams are present
-    // Third stream is not tapped until first is exhausted
-    const expectedValues = [11, 21, 31, 12, 22, 32, 13, 23, 33, 24, 34, 25];
-    expect(results).toEqual(expectedValues);
+      // Verify that all values from all streams are present
+      // Third stream is not tapped until first is exhausted
+      const expectedValues = [11, 21, 31, 12, 22, 32, 13, 23, 33, 24, 34, 25];
+      expect(results).toEqual(expectedValues);
+    });
+
+    it.concurrent(
+      'should tap next iterator over concurrency limit, once previous iterator is exhausted',
+      async () => {
+        // Create 2 streams with consistent delay but different values
+        const stream1 = createPromiseGenerator([11, 12, 13], 50); // Stream 1: first digit 1, second digit order
+        const stream2 = createPromiseGenerator([21, 22, 23, 24, 25], 50); // Stream 2: first digit 2, second digit order
+        const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
+
+        // Dont allow more than 2 streams to be processed at a time, but allow 3 values to be in flight
+        const raceFunction = race<number>(2, 3);
+
+        const results: number[] = [];
+
+        // Collect all values
+        for await (const value of raceFunction([stream1, stream2, stream3])) {
+          results.push(value);
+          if (results.length >= 10) break; // All 10 values from all streams
+        }
+
+        // With buffer capacity 3 and 2 streams, first values from both streams start,
+        // then additional values from both streams start processing
+        const expectedValues = [11, 21, 12, 22, 13, 23, 31, 24, 32, 25];
+        expect(results).toEqual(expectedValues);
+      }
+    );
   });
 
-  it.concurrent('2 streams with buffer capacity 3 - order validation', async () => {
-    // Create 2 streams with consistent delay but different values
-    const stream1 = createPromiseGenerator([11, 12, 13], 50); // Stream 1: first digit 1, second digit order
-    const stream2 = createPromiseGenerator([21, 22, 23, 24, 25], 50); // Stream 2: first digit 2, second digit order
-    const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
+  describe('Input types', () => {
+    it.concurrent('should handle empty iterator list', async () => {
+      const raceFunction = race<number>(2);
+      const emptyArray: AsyncGenerator<number>[] = [];
 
-    // Dont allow more than 2 streams to be processed at a time, but allow 3 values to be in flight
-    const raceFunction = race<number>(2, 3);
+      const results: number[] = [];
+      for await (const result of raceFunction(emptyArray)) {
+        results.push(result);
+      }
 
-    const results: number[] = [];
+      expect(results).toEqual([]);
+    });
 
-    // Collect all values
-    for await (const value of raceFunction([stream1, stream2, stream3])) {
-      results.push(value);
-      if (results.length >= 10) break; // All 10 values from all streams
-    }
+    it.concurrent('should work with concurrent iterators as input', async () => {
+      // Create a shared start time for all operations
+      const testStartTime = Date.now();
 
-    // With buffer capacity 3 and 2 streams, first values from both streams start,
-    // then additional values from both streams start processing
-    const expectedValues = [11, 21, 12, 22, 13, 23, 31, 24, 32, 25];
-    expect(results).toEqual(expectedValues);
+      // Processing functions with time-based delays relative to the start time
+      const processFn1 = async (x: number) => {
+        const elapsedTime = Date.now() - testStartTime;
+        const targetTime = x * 50; // Target time in ms (x indicates desired position * 50ms)
+        const remainingDelay = Math.max(0, targetTime - elapsedTime);
+
+        await delay(remainingDelay);
+        return 1000 + x; // 1000-series indicates stream 1
+      };
+
+      const processFn2 = async (x: number) => {
+        const elapsedTime = Date.now() - testStartTime;
+        const targetTime = x * 50; // Target time in ms (x indicates desired position * 50ms)
+        const remainingDelay = Math.max(0, targetTime - elapsedTime);
+
+        await delay(remainingDelay);
+        return 2000 + x; // 2000-series indicates stream 2
+      };
+
+      const processFn3 = async (x: number) => {
+        const elapsedTime = Date.now() - testStartTime;
+        const targetTime = x * 50; // Target time in ms (x indicates desired position * 50ms)
+        const remainingDelay = Math.max(0, targetTime - elapsedTime);
+
+        await delay(remainingDelay);
+        return 3000 + x; // 3000-series indicates stream 3
+      };
+
+      // Create concurrent iterators
+      const concurrentStream1 = concurrent(1, processFn1);
+      const concurrentStream2 = concurrent(1, processFn2);
+      const concurrentStream3 = concurrent(1, processFn3);
+
+      // Input values directly indicate the desired position in the final output
+      // Example: 1 should be the 1st item, 2 should be the 2nd item, etc.
+      const input1 = [1, 4, 7]; // Stream 1 values should appear at positions 1, 4, 7
+      const input2 = [2, 5, 8]; // Stream 2 values should appear at positions 2, 5, 8
+      const input3 = [3, 6, 9]; // Stream 3 values should appear at positions 3, 6, 9@
+
+      // Apply concurrent processing to each input stream
+      const stream1 = concurrentStream1(input1);
+      const stream2 = concurrentStream2(input2);
+      const stream3 = concurrentStream3(input3);
+
+      // Race the concurrent streams
+      const raceFunction = race<number>(3, 3); // Allow all 3 streams, 3 values in flight
+
+      const results: number[] = [];
+
+      // Collect all values from the race
+      for await (const result of raceFunction([stream1, stream2, stream3])) {
+        results.push(result);
+      }
+
+      // With our setup, each input value controls when its result will be ready
+      // x=1 is ready at ~50ms, x=2 at ~100ms, etc., so the values should come out in order
+
+      // Verify the exact order of results - should match the input values' intended order
+      const expectedOrder = [
+        1001, // Stream1: position 1 (1 + 1000)
+        2002, // Stream2: position 2 (2 + 2000)
+        3003, // Stream3: position 3 (3 + 3000)
+        1004, // Stream1: position 4 (4 + 1000)
+        2005, // Stream2: position 5 (5 + 2000)
+        3006, // Stream3: position 6 (6 + 3000)
+        1007, // Stream1: position 7 (7 + 1000)
+        2008, // Stream2: position 8 (8 + 2000)
+        3009, // Stream3: position 9 (9 + 3000)
+      ];
+
+      expect(results).toEqual(expectedOrder);
+    });
   });
 
-  it.concurrent('should handle empty iterator list', async () => {
-    const raceFunction = race<number>(2);
-    const emptyArray: AsyncGenerator<number>[] = [];
+  describe('Lazy consumption', () => {
+    function getGenerators(max: number) {
+      // Track when values are consumed from source generators
+      const consumed1: number[] = [];
+      const consumed2: number[] = [];
+      const consumed3: number[] = [];
 
-    const results: number[] = [];
-    for await (const result of raceFunction(emptyArray)) {
+      // Create generators that track when values are pulled from them
+      async function* trackedGenerator1(): AsyncGenerator<number> {
+        for (let i = 1; i <= max; i++) {
+          const value = i * 10;
+          consumed1.push(value);
+          yield value;
+        }
+      }
+
+      async function* trackedGenerator2(): AsyncGenerator<number> {
+        for (let i = 1; i <= max; i++) {
+          const value = i * 100;
+          consumed2.push(value);
+          yield value;
+        }
+      }
+
+      async function* trackedGenerator3(): AsyncGenerator<number> {
+        for (let i = 1; i <= max; i++) {
+          const value = i * 1000;
+          consumed3.push(value);
+          yield value;
+        }
+      }
+
+      return {
+        consumed1,
+        consumed2,
+        consumed3,
+        trackedGenerator1,
+        trackedGenerator2,
+        trackedGenerator3,
+      };
+    }
+    it.concurrent('should be able to consume a single stream at a time', async () => {
+      const {
+        consumed1,
+        consumed2,
+        consumed3,
+        trackedGenerator1,
+        trackedGenerator2,
+        trackedGenerator3,
+      } = getGenerators(3);
+      const raceFunction = race<number>(1, Infinity /* eagerInput: 1, eagerOutput: Infinity */);
+      const raceIterator = raceFunction([
+        trackedGenerator1(),
+        trackedGenerator2(),
+        trackedGenerator3(),
+      ]);
+      expect(consumed2).toEqual([]);
+      expect(consumed1).toEqual([]);
+
+      // Consume first 2 values (should fill the buffer)
+      expect(await raceIterator.next().then(r => r.value)).toEqual(10);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(20);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(30);
+      await new Promise(setImmediate); // allow iterator to catch up
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(100);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(200);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(300);
+      await new Promise(setImmediate); // allow iterator to catch up
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([1000, 2000, 3000]);
+    });
+    it.concurrent('should be able to consume streams concurrently', async () => {
+      const {
+        consumed1,
+        consumed2,
+        consumed3,
+        trackedGenerator1,
+        trackedGenerator2,
+        trackedGenerator3,
+      } = getGenerators(3);
+      // Set up race with buffer capacity of 2
+      const raceFunction = race<number>(2, Infinity);
+      const raceIterator = raceFunction([
+        trackedGenerator1(),
+        trackedGenerator2(),
+        trackedGenerator3(),
+      ]);
+      expect(consumed2).toEqual([]);
+      expect(consumed1).toEqual([]);
+      expect(consumed3).toEqual([]);
+
+      // Consume first 2 iterators
+      expect(await raceIterator.next().then(r => r.value)).toEqual(10);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(100);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(20);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(200);
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(30);
+      await new Promise(setImmediate); // allow event loop to catch up to fetch more values
+      expect(consumed1).toEqual([10, 20, 30]);
+      expect(consumed2).toEqual([100, 200, 300]);
+      expect(consumed3).toEqual([1000, 2000, 3000]);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(300);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(1000);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(2000);
+      expect(await raceIterator.next().then(r => r.value)).toEqual(3000);
+    });
+  });
+  async function fromAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+    const results: T[] = [];
+    for await (const result of iterable) {
       results.push(result);
     }
+    return results;
+  }
+  describe.concurrent('Concurrency control', () => {
+    describe.concurrent('One upstream', () => {
+      it.concurrent('should be able to produce a single stream at a time', async () => {
+        const processFn = trackConcurrency(async v => {
+          await delay(50);
+          return v * 10;
+        });
+        // Create a concurrent processor with concurrency of 2
+        const upstream = concurrent(1, processFn)([1, 2, 3, 4, 5, 6]);
+        const results = await fromAsync(race<number>(Infinity, 1)([upstream]));
+        // With output concurrency of 1, maxInFlight should never exceed 1
+        expect(results).toEqual([10, 20, 30, 40, 50, 60]);
+        expect(processFn.maxInFlight).toBe(1);
+      });
+      it.concurrent(
+        'should be able to produce two items concurrently, even if downstream concurrency is 1',
+        async () => {
+          const upstreamFn = trackConcurrency(async v => {
+            await delay(50);
+            return v * 10;
+          });
+          const downstremFn = trackConcurrency(async v => {
+            await delay(50);
+            return -v;
+          });
+          // Create a concurrent processor with concurrency of 2
+          const upstream = concurrent(2, upstreamFn)([1, 2, 3, 4, 5, 6]);
+          const mixed = race<number>(Infinity, 1)([upstream]);
+          const downstream = concurrent(1, downstremFn)(mixed);
+          // With output concurrency of 1, maxInFlight should never exceed 1
+          expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
+          expect(upstreamFn.maxInFlight).toBe(2);
+          expect(downstremFn.maxInFlight).toBe(1);
+        }
+      );
+      it.concurrent(
+        'should be able to produce and consume two items concurrently with equal timing',
+        async () => {
+          const upsteamFn = trackConcurrency(async v => {
+            await delay(50);
+            return v * 10;
+          });
+          const downstreamFn = trackConcurrency(async v => {
+            await delay(50);
+            return -v;
+          });
+          // Create a concurrent processor with concurrency of 2
+          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
+          const mixed = race<number>(Infinity, 1)([upstream]);
+          const downstream = concurrent(2, downstreamFn)(mixed);
+          // With output concurrency of 1, maxInFlight should never exceed 1
+          expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
+          expect(upsteamFn.maxInFlight).toBe(2);
+          expect(downstreamFn.maxInFlight).toBe(2);
+        }
+      );
+      it.concurrent(
+        'should be able to produce and consume two items concurrently with slow upstream',
+        async () => {
+          const upsteamFn = trackConcurrency(async v => {
+            await delay(100);
+            return v * 10;
+          });
+          const downstreamFn = trackConcurrency(async v => {
+            await delay(50);
+            return -v;
+          });
+          // Create a concurrent processor with concurrency of 2
+          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
+          const mixed = race<number>(Infinity, 1)([upstream]);
+          const downstream = concurrent(2, downstreamFn)(mixed);
+          // With output concurrency of 1, maxInFlight should never exceed 1
+          expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
+          expect(upsteamFn.maxInFlight).toBe(2);
+          expect(downstreamFn.maxInFlight).toBe(2);
+        }
+      );
+      it.concurrent(
+        'should be able to produce and consume two items concurrently with slow downstream',
+        async () => {
+          const upsteamFn = trackConcurrency(async v => {
+            await delay(50);
+            return v * 10;
+          });
+          const downstreamFn = trackConcurrency(async v => {
+            await delay(100);
+            return -v;
+          });
+          // Create a concurrent processor with concurrency of 2
+          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
+          const mixed = race<number>(Infinity, 1)([upstream]);
+          const downstream = concurrent(2, downstreamFn)(mixed);
+          // With output concurrency of 1, maxInFlight should never exceed 1
+          expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
+          expect(upsteamFn.maxInFlight).toBe(2);
+          expect(downstreamFn.maxInFlight).toBe(2);
+        }
+      );
+    });
+    describe.concurrent('Two upstreams', () => {
+      it.concurrent('should respect each individual upstream concurrency control', async () => {
+        const upsteamFn1 = trackConcurrency(async v => {
+          await delay(50);
+          return v * 10;
+        });
+        const upsteamFn2 = trackConcurrency(async v => {
+          await delay(50);
+          return v * -10;
+        });
+        // Create a concurrent processor with concurrency of 2
+        const upstream1 = concurrent(1, upsteamFn1)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = concurrent(1, upsteamFn2)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        // With output concurrency of 1, maxInFlight should never exceed 1
+        expect(results).toEqual([10, -100, 20, -200, 30, -300, 40, -400, 50, -500, 60, -600]);
+        expect(upsteamFn1.maxInFlight).toBe(1);
+        expect(upsteamFn2.maxInFlight).toBe(1);
+      });
 
-    expect(results).toEqual([]);
+      it.concurrent('should be able to race streams of different speeds', async () => {
+        const upsteamFn1 = trackConcurrency(async v => {
+          return v * 10;
+        });
+        const upsteamFn2 = trackConcurrency(async v => {
+          await delay(100);
+          return v * -10;
+        });
+        // Create a concurrent processor with concurrency of 2
+        const upstream1 = concurrent(1, upsteamFn1)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = concurrent(1, upsteamFn2)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        expect(results).toEqual([10, 20, 30, 40, 50, 60, -100, -200, -300, -400, -500, -600]);
+        expect(upsteamFn1.maxInFlight).toBe(1);
+        expect(upsteamFn2.maxInFlight).toBe(1);
+      });
+
+      it.concurrent('should be able to race two concurrent streams speeds', async () => {
+        const upsteamFn1 = trackConcurrency(async v => {
+          await delay(50);
+          return v * 10;
+        });
+        const upsteamFn2 = trackConcurrency(async v => {
+          await delay(50);
+          return v * -10;
+        });
+        // Create a concurrent processor with concurrency of 2
+        const upstream1 = concurrent(2, upsteamFn1)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = concurrent(2, upsteamFn2)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        expect(results).toEqual([10, 20, -100, -200, 30, 40, -300, -400, 50, 60, -500, -600]);
+        expect(upsteamFn1.maxInFlight).toBe(2);
+        expect(upsteamFn2.maxInFlight).toBe(2);
+      });
+    });
   });
 });
