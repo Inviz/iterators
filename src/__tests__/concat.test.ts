@@ -1,5 +1,5 @@
 import { describe, expect, it, vitest } from 'vitest';
-import { concurrent, race } from '..';
+import { concat, map } from '..';
 
 const trackConcurrency = (fn: (x: number) => Promise<number>) => {
   const processed: number[] = [];
@@ -54,7 +54,7 @@ async function* createPromiseGenerator(values: number[], delayMs: number): Async
   }
 }
 
-describe.concurrent('race', () => {
+describe.concurrent('flatten', () => {
   it.concurrent(
     'should process multiple iterators concurrently with value-based delays',
     async () => {
@@ -64,13 +64,13 @@ describe.concurrent('race', () => {
       const generator2 = createValueBasedDelayGenerator([100, 250, 400]);
       const generator3 = createValueBasedDelayGenerator([50, 200, 350]);
 
-      const raceFunction = race<number>(Infinity, Infinity);
+      const flattenFunction = concat<number>(Infinity, Infinity);
       const iteratorsArray = [generator1, generator2, generator3];
 
-      // Use the race function with our generators
+      // Use the flatten function with our generators
       const results: number[] = [];
 
-      for await (const result of raceFunction(iteratorsArray)) {
+      for await (const result of flattenFunction(iteratorsArray)) {
         results.push(result);
       }
 
@@ -87,13 +87,13 @@ describe.concurrent('race', () => {
 
     // Set a small buffer capacity - limiting how many outstanding promises can be processed
     const bufferCapacity = 2;
-    const raceFunction = race<number>(bufferCapacity);
+    const flattenFunction = concat<number>(bufferCapacity);
 
     const iteratorsArray = [promiseGen1, promiseGen2];
     const results: number[] = [];
 
     // This loop collects values as fast as possible
-    for await (const value of raceFunction(iteratorsArray)) {
+    for await (const value of flattenFunction(iteratorsArray)) {
       results.push(value);
       if (results.length >= 8) break;
     }
@@ -102,7 +102,7 @@ describe.concurrent('race', () => {
     expect(results).toEqual([11, 21, 12, 22, 13, 23, 14, 24]);
   });
 
-  describe('Order', () => {
+  describe.concurrent('Order', () => {
     it.concurrent('should tap iterators eagerly', async () => {
       // Create 3 streams with consistent delay but different values
       const stream1 = createPromiseGenerator([11, 12, 13], 50); // Stream 1: first digit 1, second digit order
@@ -110,11 +110,11 @@ describe.concurrent('race', () => {
       const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
 
       // all 3 are allowed to tap
-      const raceFunction = race<number>(3, Infinity);
+      const flattenFunction = concat<number>(3, Infinity);
       const results: number[] = [];
 
       // Collect all values
-      for await (const value of raceFunction([stream1, stream2, stream3])) {
+      for await (const value of flattenFunction([stream1, stream2, stream3])) {
         results.push(value);
       }
 
@@ -133,12 +133,12 @@ describe.concurrent('race', () => {
         const stream3 = createPromiseGenerator([31, 32, 33, 34], 50); // Stream 3: first digit 3, second digit order
 
         // Dont allow more than 2 streams to be processed at a time, but allow 3 values to be in flight
-        const raceFunction = race<number>(2, 3);
+        const flattenFunction = concat<number>(2, 3);
 
         const results: number[] = [];
 
         // Collect all values
-        for await (const value of raceFunction([stream1, stream2, stream3])) {
+        for await (const value of flattenFunction([stream1, stream2, stream3])) {
           results.push(value);
           if (results.length >= 10) break; // All 10 values from all streams
         }
@@ -151,13 +151,13 @@ describe.concurrent('race', () => {
     );
   });
 
-  describe('Input types', () => {
+  describe.concurrent('Input types', () => {
     it.concurrent('should handle empty iterator list', async () => {
-      const raceFunction = race<number>(2);
+      const flattenFunction = concat<number>(2);
       const emptyArray: AsyncGenerator<number>[] = [];
 
       const results: number[] = [];
-      for await (const result of raceFunction(emptyArray)) {
+      for await (const result of flattenFunction(emptyArray)) {
         results.push(result);
       }
 
@@ -197,9 +197,9 @@ describe.concurrent('race', () => {
       };
 
       // Create concurrent iterators
-      const concurrentStream1 = concurrent(1, processFn1);
-      const concurrentStream2 = concurrent(1, processFn2);
-      const concurrentStream3 = concurrent(1, processFn3);
+      const concurrentStream1 = map(processFn1, 1);
+      const concurrentStream2 = map(processFn2, 1);
+      const concurrentStream3 = map(processFn3, 1);
 
       // Input values directly indicate the desired position in the final output
       // Example: 1 should be the 1st item, 2 should be the 2nd item, etc.
@@ -213,12 +213,12 @@ describe.concurrent('race', () => {
       const stream3 = concurrentStream3(input3);
 
       // Race the concurrent streams
-      const raceFunction = race<number>(3, 3); // Allow all 3 streams, 3 values in flight
+      const flattenFunction = concat<number>(3, 3); // Allow all 3 streams, 3 values in flight
 
       const results: number[] = [];
 
-      // Collect all values from the race
-      for await (const result of raceFunction([stream1, stream2, stream3])) {
+      // Collect all values from the flatten
+      for await (const result of flattenFunction([stream1, stream2, stream3])) {
         results.push(result);
       }
 
@@ -242,7 +242,7 @@ describe.concurrent('race', () => {
     });
   });
 
-  describe('Lazy consumption', () => {
+  describe.concurrent('Lazy consumption', () => {
     function getGenerators(max: number) {
       // Track when values are consumed from source generators
       const consumed1: number[] = [];
@@ -292,8 +292,11 @@ describe.concurrent('race', () => {
         trackedGenerator2,
         trackedGenerator3,
       } = getGenerators(3);
-      const raceFunction = race<number>(1, Infinity /* eagerInput: 1, eagerOutput: Infinity */);
-      const raceIterator = raceFunction([
+      const flattenFunction = concat<number>(
+        1,
+        Infinity /* eagerInput: 1, eagerOutput: Infinity */
+      );
+      const flattenIterator = flattenFunction([
         trackedGenerator1(),
         trackedGenerator2(),
         trackedGenerator3(),
@@ -302,28 +305,28 @@ describe.concurrent('race', () => {
       expect(consumed1).toEqual([]);
 
       // Consume first 2 values (should fill the buffer)
-      expect(await raceIterator.next().then(r => r.value)).toEqual(10);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(10);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(20);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(20);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(30);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(30);
       await new Promise(setImmediate); // allow iterator to catch up
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(100);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(100);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(200);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(200);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(300);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(300);
       await new Promise(setImmediate); // allow iterator to catch up
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
@@ -338,9 +341,9 @@ describe.concurrent('race', () => {
         trackedGenerator2,
         trackedGenerator3,
       } = getGenerators(3);
-      // Set up race with buffer capacity of 2
-      const raceFunction = race<number>(2, Infinity);
-      const raceIterator = raceFunction([
+      // Set up flatten with buffer capacity of 2
+      const flattenFunction = concat<number>(2, Infinity);
+      const flattenIterator = flattenFunction([
         trackedGenerator1(),
         trackedGenerator2(),
         trackedGenerator3(),
@@ -350,31 +353,31 @@ describe.concurrent('race', () => {
       expect(consumed3).toEqual([]);
 
       // Consume first 2 iterators
-      expect(await raceIterator.next().then(r => r.value)).toEqual(10);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(10);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(100);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(100);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(20);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(20);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(200);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(200);
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(30);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(30);
       await new Promise(setImmediate); // allow event loop to catch up to fetch more values
       expect(consumed1).toEqual([10, 20, 30]);
       expect(consumed2).toEqual([100, 200, 300]);
       expect(consumed3).toEqual([1000, 2000, 3000]);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(300);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(1000);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(2000);
-      expect(await raceIterator.next().then(r => r.value)).toEqual(3000);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(300);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(1000);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(2000);
+      expect(await flattenIterator.next().then(r => r.value)).toEqual(3000);
     });
   });
   async function fromAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -388,12 +391,12 @@ describe.concurrent('race', () => {
     describe.concurrent('One upstream', () => {
       it.concurrent('should be able to produce a single stream at a time', async () => {
         const processFn = trackConcurrency(async v => {
-          await delay(50);
+          await delay(10);
           return v * 10;
         });
         // Create a concurrent processor with concurrency of 2
-        const upstream = concurrent(1, processFn)([1, 2, 3, 4, 5, 6]);
-        const results = await fromAsync(race<number>(Infinity, 1)([upstream]));
+        const upstream = map(processFn, 1)([1, 2, 3, 4, 5, 6]);
+        const results = await fromAsync(concat<number>(Infinity, 1)([upstream]));
         // With output concurrency of 1, maxInFlight should never exceed 1
         expect(results).toEqual([10, 20, 30, 40, 50, 60]);
         expect(processFn.maxInFlight).toBe(1);
@@ -402,17 +405,17 @@ describe.concurrent('race', () => {
         'should be able to produce two items concurrently, even if downstream concurrency is 1',
         async () => {
           const upstreamFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return v * 10;
           });
           const downstremFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return -v;
           });
           // Create a concurrent processor with concurrency of 2
-          const upstream = concurrent(2, upstreamFn)([1, 2, 3, 4, 5, 6]);
-          const mixed = race<number>(Infinity, 1)([upstream]);
-          const downstream = concurrent(1, downstremFn)(mixed);
+          const upstream = map(upstreamFn, 2)([1, 2, 3, 4, 5, 6]);
+          const mixed = concat<number>(Infinity, 1)([upstream]);
+          const downstream = map(downstremFn, 1)(mixed);
           // With output concurrency of 1, maxInFlight should never exceed 1
           expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
           expect(upstreamFn.maxInFlight).toBe(2);
@@ -423,17 +426,17 @@ describe.concurrent('race', () => {
         'should be able to produce and consume two items concurrently with equal timing',
         async () => {
           const upsteamFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return v * 10;
           });
           const downstreamFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return -v;
           });
           // Create a concurrent processor with concurrency of 2
-          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
-          const mixed = race<number>(Infinity, 1)([upstream]);
-          const downstream = concurrent(2, downstreamFn)(mixed);
+          const upstream = map(upsteamFn, 2)([1, 2, 3, 4, 5, 6]);
+          const mixed = concat<number>(Infinity, 1)([upstream]);
+          const downstream = map(downstreamFn, 2)(mixed);
           // With output concurrency of 1, maxInFlight should never exceed 1
           expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
           expect(upsteamFn.maxInFlight).toBe(2);
@@ -444,17 +447,17 @@ describe.concurrent('race', () => {
         'should be able to produce and consume two items concurrently with slow upstream',
         async () => {
           const upsteamFn = trackConcurrency(async v => {
-            await delay(100);
+            await delay(20);
             return v * 10;
           });
           const downstreamFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return -v;
           });
           // Create a concurrent processor with concurrency of 2
-          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
-          const mixed = race<number>(Infinity, 1)([upstream]);
-          const downstream = concurrent(2, downstreamFn)(mixed);
+          const upstream = map(upsteamFn, 2)([1, 2, 3, 4, 5, 6]);
+          const mixed = concat<number>(Infinity, 1)([upstream]);
+          const downstream = map(downstreamFn, 2)(mixed);
           // With output concurrency of 1, maxInFlight should never exceed 1
           expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
           expect(upsteamFn.maxInFlight).toBe(2);
@@ -465,17 +468,17 @@ describe.concurrent('race', () => {
         'should be able to produce and consume two items concurrently with slow downstream',
         async () => {
           const upsteamFn = trackConcurrency(async v => {
-            await delay(50);
+            await delay(10);
             return v * 10;
           });
           const downstreamFn = trackConcurrency(async v => {
-            await delay(100);
+            await delay(20);
             return -v;
           });
           // Create a concurrent processor with concurrency of 2
-          const upstream = concurrent(2, upsteamFn)([1, 2, 3, 4, 5, 6]);
-          const mixed = race<number>(Infinity, 1)([upstream]);
-          const downstream = concurrent(2, downstreamFn)(mixed);
+          const upstream = map(upsteamFn, 2)([1, 2, 3, 4, 5, 6]);
+          const mixed = concat<number>(Infinity, 1)([upstream]);
+          const downstream = map(downstreamFn, 2)(mixed);
           // With output concurrency of 1, maxInFlight should never exceed 1
           expect(await fromAsync(downstream)).toEqual([-10, -20, -30, -40, -50, -60]);
           expect(upsteamFn.maxInFlight).toBe(2);
@@ -486,56 +489,106 @@ describe.concurrent('race', () => {
     describe.concurrent('Two upstreams', () => {
       it.concurrent('should respect each individual upstream concurrency control', async () => {
         const upsteamFn1 = trackConcurrency(async v => {
-          await delay(50);
+          await delay(10);
           return v * 10;
         });
         const upsteamFn2 = trackConcurrency(async v => {
-          await delay(50);
+          await delay(10);
           return v * -10;
         });
         // Create a concurrent processor with concurrency of 2
-        const upstream1 = concurrent(1, upsteamFn1)([1, 2, 3, 4, 5, 6]);
-        const upstream2 = concurrent(1, upsteamFn2)([10, 20, 30, 40, 50, 60]);
-        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        const upstream1 = map(upsteamFn1, 1)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = map(upsteamFn2, 1)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(concat<number>(Infinity, Infinity)([upstream1, upstream2]));
         // With output concurrency of 1, maxInFlight should never exceed 1
         expect(results).toEqual([10, -100, 20, -200, 30, -300, 40, -400, 50, -500, 60, -600]);
         expect(upsteamFn1.maxInFlight).toBe(1);
         expect(upsteamFn2.maxInFlight).toBe(1);
       });
 
-      it.concurrent('should be able to race streams of different speeds', async () => {
+      it.concurrent('should be able to flatten streams of different speeds', async () => {
         const upsteamFn1 = trackConcurrency(async v => {
           return v * 10;
         });
         const upsteamFn2 = trackConcurrency(async v => {
-          await delay(100);
+          await delay(20);
           return v * -10;
         });
         // Create a concurrent processor with concurrency of 2
-        const upstream1 = concurrent(1, upsteamFn1)([1, 2, 3, 4, 5, 6]);
-        const upstream2 = concurrent(1, upsteamFn2)([10, 20, 30, 40, 50, 60]);
-        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        const upstream1 = map(upsteamFn1, 1)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = map(upsteamFn2, 1)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(concat<number>(Infinity, Infinity)([upstream1, upstream2]));
         expect(results).toEqual([10, 20, 30, 40, 50, 60, -100, -200, -300, -400, -500, -600]);
         expect(upsteamFn1.maxInFlight).toBe(1);
         expect(upsteamFn2.maxInFlight).toBe(1);
       });
 
-      it.concurrent('should be able to race two concurrent streams speeds', async () => {
+      it.concurrent('should be able to flatten two concurrent streams speeds', async () => {
         const upsteamFn1 = trackConcurrency(async v => {
-          await delay(50);
+          await delay(10);
           return v * 10;
         });
         const upsteamFn2 = trackConcurrency(async v => {
-          await delay(50);
+          await delay(10);
           return v * -10;
         });
         // Create a concurrent processor with concurrency of 2
-        const upstream1 = concurrent(2, upsteamFn1)([1, 2, 3, 4, 5, 6]);
-        const upstream2 = concurrent(2, upsteamFn2)([10, 20, 30, 40, 50, 60]);
-        const results = await fromAsync(race<number>(Infinity, Infinity)([upstream1, upstream2]));
+        const upstream1 = map(upsteamFn1, 2)([1, 2, 3, 4, 5, 6]);
+        const upstream2 = map(upsteamFn2, 2)([10, 20, 30, 40, 50, 60]);
+        const results = await fromAsync(concat<number>(Infinity, Infinity)([upstream1, upstream2]));
         expect(results).toEqual([10, 20, -100, -200, 30, 40, -300, -400, 50, 60, -500, -600]);
         expect(upsteamFn1.maxInFlight).toBe(2);
         expect(upsteamFn2.maxInFlight).toBe(2);
+      });
+    });
+    describe.concurrent('Three upstreams', () => {
+      it.concurrent('should tap into next stream when previous stream is done', async () => {
+        const upsteamFn1 = trackConcurrency(async v => {
+          await delay(10);
+          return v * 10;
+        });
+        const upsteamFn2 = trackConcurrency(async v => {
+          await delay(10);
+          return v * -10;
+        });
+        const upsteamFn3 = trackConcurrency(async v => {
+          await delay(10);
+          return v + 7;
+        });
+        const upstream1 = map(upsteamFn1, 1)([1, 2, 3, 4, 5, 6, 7]);
+        const upstream2 = map(upsteamFn2, 1)([10, 20, 30]);
+        const upstream3 = map(upsteamFn3, 1)([100, 200, 300]);
+        const results = await fromAsync(
+          concat<number>(2, Infinity)([upstream1, upstream2, upstream3])
+        );
+        expect(results).toEqual([10, -100, 20, -200, 30, -300, 40, 107, 50, 207, 60, 307, 70]);
+        expect(upsteamFn1.maxInFlight).toBe(1);
+        expect(upsteamFn2.maxInFlight).toBe(1);
+        expect(upsteamFn3.maxInFlight).toBe(1);
+      });
+      it.concurrent('should tap into next concurrent when previous stream is done', async () => {
+        const upsteamFn1 = trackConcurrency(async v => {
+          await delay(10);
+          return v * 10;
+        });
+        const upsteamFn2 = trackConcurrency(async v => {
+          await delay(10);
+          return v * -10;
+        });
+        const upsteamFn3 = trackConcurrency(async v => {
+          await delay(10);
+          return v + 7;
+        });
+        const upstream1 = map(upsteamFn1, 2)([1, 2, 3, 4, 5, 6, 7]);
+        const upstream2 = map(upsteamFn2, 2)([10, 20, 30]);
+        const upstream3 = map(upsteamFn3, 2)([100, 200, 300]);
+        const results = await fromAsync(
+          concat<number>(2, Infinity)([upstream1, upstream2, upstream3])
+        );
+        expect(results).toEqual([10, 20, -100, -200, 30, 40, -300, 50, 60, 107, 207, 70, 307]);
+        expect(upsteamFn1.maxInFlight).toBe(2);
+        expect(upsteamFn2.maxInFlight).toBe(2);
+        expect(upsteamFn3.maxInFlight).toBe(2);
       });
     });
   });

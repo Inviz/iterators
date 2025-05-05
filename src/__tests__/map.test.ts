@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { concurrent } from '..';
+import { map } from '..';
 
 // Helper to create a delay function
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -24,7 +24,7 @@ describe.concurrent('concurrent', () => {
 
     // Process with concurrency of 2
     const results: number[] = [];
-    for await (const result of concurrent(2, processFn, items)) {
+    for await (const result of map(items, processFn, 2)) {
       results.push(result);
     }
 
@@ -48,7 +48,7 @@ describe.concurrent('concurrent', () => {
       return x * 2;
     });
 
-    const concurrentProcess = concurrent(3, processFn);
+    const concurrentProcess = map(processFn, 3);
 
     const items = [1, 2, 3, 4, 5];
     const results: number[] = [];
@@ -69,7 +69,7 @@ describe.concurrent('concurrent', () => {
       return x * 2;
     });
 
-    const concurrentProcess = concurrent(2, processFn);
+    const concurrentProcess = map(processFn, 2);
 
     const items = [1, 2, 3, 4, 5, 6, 7, 8];
     const results: number[] = [];
@@ -90,23 +90,19 @@ describe.concurrent('concurrent', () => {
 
   it.concurrent('should support composing concurrent operations', async () => {
     // First processor doubles numbers with concurrency of 2
-    console.time('step1');
-    console.time('step2');
     const processFn1 = vi.fn().mockImplementation(async (x: number) => {
-      console.timeLog('step1', x);
       await delay(100);
       return x * 2;
     });
 
     // Second processor adds 10 to numbers with concurrency of 3
     const processFn2 = vi.fn().mockImplementation(async (x: number) => {
-      console.timeLog('step2', x);
       await delay(100);
       return x + 10;
     });
 
-    const firstConcurrent = concurrent(2, processFn1);
-    const secondConcurrent = concurrent(3, processFn2);
+    const firstConcurrent = map(processFn1, 2);
+    const secondConcurrent = map(processFn2, 3);
     var calledTimes = 0;
     async function* generateItems() {
       for (let i = 1; i <= 14; i++) {
@@ -158,7 +154,7 @@ describe.concurrent('concurrent', () => {
 
     // Create concurrent processor with limit of 3
     const concurrencyLimit = 3;
-    const concurrentProcess = concurrent(concurrencyLimit, processFn);
+    const concurrentProcess = map(processFn, concurrencyLimit);
 
     const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     const results: number[] = [];

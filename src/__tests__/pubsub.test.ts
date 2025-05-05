@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { pubsub } from '../pubsub';
+import { pubsub } from '../lib/pubsub';
 
 describe.concurrent('pubsub', () => {
   it('should allow publishing and consuming values', async () => {
