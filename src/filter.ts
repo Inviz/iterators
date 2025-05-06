@@ -10,7 +10,7 @@ import { AnyIterable, MaybePromise } from './types';
  * @param input Source iterable to filter
  * @param test Predicate function to test each item - can return boolean to filter, null to exclude, or any other value to transform
  */
-type FilterFunction<T, R = T> = (value: Awaited<T>) => MaybePromise<boolean | null | R>;
+type FilterFunction<T, R = T> = (value: Awaited<T> | T) => MaybePromise<boolean | null | R>;
 async function* _filter<T, R = T>(
   input: AnyIterable<T>,
   test: FilterFunction<T, R>
@@ -35,8 +35,8 @@ export function filter<T, R = T>(
 ): AsyncGenerator<T | R>;
 export function filter<T, R = T>(
   test: FilterFunction<T, R>
-): (input: AnyIterable<T>) => AsyncGenerator<T | R>;
-export function filter<T, R = T>(input: AnyIterable<T> | FilterFunction<T, R>, test?: any) {
+): (input: AnyIterable<T>) => AsyncGenerator<R extends boolean | null ? T : R>;
+export function filter<T, R>(input: AnyIterable<T> | FilterFunction<T, R>, test?: any) {
   // If the first argument is a function, assume it's the test function and return a curried function
   if (typeof input === 'function') {
     return (_input: AnyIterable<T>) => filter(_input, input);

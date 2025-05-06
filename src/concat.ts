@@ -33,7 +33,7 @@ async function* _concatConcurrently<T>(
 
   // Use pubsub to control output values
   // % console.time('race');
-  const { publish, consume, producing } = pubsub<R>(undefined, outputConcurrency);
+  const { publish, consume, producing } = pubsub<R>(outputConcurrency);
 
   let inputsExhausted = false;
   // track how many items have been published but not consumed for each iterator

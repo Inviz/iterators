@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { pubsub } from '../lib/pubsub';
 
 describe.concurrent('pubsub', () => {
@@ -43,21 +43,6 @@ describe.concurrent('pubsub', () => {
     expect(value3).toBe(3);
   });
 
-  it('should call onStarve when a consumer is waiting', async () => {
-    const onStarve = vi.fn();
-    const { consume } = pubsub<number>(onStarve);
-
-    const consumePromise = consume();
-
-    await new Promise(resolve => setTimeout(resolve, 10));
-    expect(onStarve).toHaveBeenCalled();
-
-    // Clean up the dangling promise
-    process.nextTick(() => {
-      consumePromise.catch(() => {});
-    });
-  });
-
   it('should handle consuming before publishing', async () => {
     const { publish, consume } = pubsub<number>();
 
@@ -73,7 +58,7 @@ describe.concurrent('pubsub', () => {
 
   it('should respect buffer capacity limit', async () => {
     const bufferCapacity = 2;
-    const { publish, consume, producing } = pubsub<number>(undefined, bufferCapacity);
+    const { publish, consume, producing } = pubsub<number>(bufferCapacity);
 
     // These should be added to the buffer immediately
     const p1 = publish(1);
@@ -154,7 +139,7 @@ describe.concurrent('pubsub', () => {
 
   it('should block publishers when buffer is full', async () => {
     const bufferCapacity = 2;
-    const { publish, consume, producing } = pubsub<number>(undefined, bufferCapacity);
+    const { publish, consume, producing } = pubsub<number>(bufferCapacity);
 
     // Track which generators get processed first
     const processingOrder: string[] = [];

@@ -4,7 +4,7 @@ import { map } from '..';
 // Helper to create a delay function
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-describe.concurrent('concurrent', () => {
+describe.concurrent('map', () => {
   it.concurrent('should process items concurrently with limited concurrency', async () => {
     const processed: number[] = [];
     const processingTimes: number[] = [];
@@ -85,7 +85,7 @@ describe.concurrent('concurrent', () => {
     const duration = Date.now() - startTime;
     expect(duration).toBeLessThan(300); // Should take ~200ms with concurrency of 2
     expect(results.sort()).toEqual([2, 4, 6, 8]);
-    expect(processFn).toHaveBeenCalledTimes(5); // 4 real and  1 eagerly produced result
+    expect(processFn).toHaveBeenCalledTimes(6); // 4 real and  2 eagerly produced result
   });
 
   it.concurrent('should support composing concurrent operations', async () => {
@@ -123,8 +123,8 @@ describe.concurrent('concurrent', () => {
     }
     // Each function should be called once for each input
     expect(processFn2).toHaveBeenCalledTimes(7); // Step 2 kept its buffer filled, so 2 more items were processed
-    expect(processFn1).toHaveBeenCalledTimes(8); // Step 2 requested for 2 more items, and then step 1 also eagerly produced 1 more
-    expect(calledTimes).toBe(7); // input generator produced 7  values
+    expect(processFn1).toHaveBeenCalledTimes(9); // Step 2 requested for 2 more items, and then step 1 also eagerly produced 2 more
+    expect(calledTimes).toBe(9); // input generator produced 7  values
 
     const duration = Date.now() - startTime;
 
@@ -172,4 +172,65 @@ describe.concurrent('concurrent', () => {
     // Most important check: concurrency limit was respected
     expect(maxActiveOperations).toBe(concurrencyLimit); // It should actually reach the limit
   });
+
+  it.concurrent(
+    'should process at least one value from an iterator that blocks indefinitely',
+    async () => {
+      // Create a deferred promise that will never resolve
+      let neverResolve!: () => void;
+      const blockingPromise = new Promise<void>(resolve => {
+        neverResolve = resolve;
+      });
+
+      // Create an async generator that yields one value then blocks forever
+      async function* createBlockingIterator() {
+        yield 1; // This value should be processed
+        await blockingPromise; // This will block forever
+        yield 2; // This value should never be reached
+      }
+
+      // Process function that doubles the input with a small delay
+      const processFn = vi.fn().mockImplementation(async (x: number) => {
+        await delay(10);
+        return x * 2;
+      });
+
+      // Use map with concurrency of 2
+      const mapper = map(createBlockingIterator(), processFn, 2);
+
+      // Try to get at least one result
+      const results: number[] = [];
+      let timedOut = false;
+
+      // Set up a timeout to prevent the test from hanging
+      const timeoutPromise = new Promise<void>(resolve => {
+        setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, 100);
+      });
+
+      // Race between getting values and timing out
+      while (!timedOut) {
+        const resultPromise = mapper.next();
+        await Promise.race([resultPromise, timeoutPromise]);
+
+        if (timedOut) break;
+
+        const result = await resultPromise;
+        if (result.done) break;
+
+        results.push(result.value);
+        if (results.length >= 1) break; // We only need to verify at least one result
+      }
+
+      // Verify we got at least one result
+      expect(results.length).toBeGreaterThan(0);
+      expect(results).toContain(2); // First value (1) doubled
+      expect(processFn).toHaveBeenCalledWith(1, 0, createBlockingIterator());
+
+      // Clean up to prevent test from hanging
+      neverResolve();
+    }
+  );
 });

@@ -1,15 +1,13 @@
 /**
  * Creates a simple publish-subscribe mechanism for async iterators
  * Used to coordinate values between producers and consumers
- * @param onStarve Optional callback when a consumer is waiting for values
  * @param bufferCapacity Optional maximum number of items that can be produced ahead of consumption
  */
-export function pubsub<T>(onStarve?: () => void, bufferCapacity: number = Infinity) {
+export function pubsub<T>(bufferCapacity: number = Infinity) {
   const producing = new Set<Promise<T>>();
   const consuming = new Set<(value: T) => void>();
   const buffer = new Set<() => T>();
   const waitingProducers = new Set<() => void>();
-
   /**
    * Helper to take the first callback from a set, remove it, and execute it
    */
@@ -23,17 +21,21 @@ export function pubsub<T>(onStarve?: () => void, bufferCapacity: number = Infini
   }
 
   /**
-   * Publish a value to be consumed
+   * Wait for queue to free up
+   *  */
+  async function wait() {
+    return new Promise<void>(resolve => {
+      waitingProducers.add(resolve);
+    });
+  }
+
+  /**
+   * Publish a value to be consumed. If queue is full, resolves when space is available.
    */
   async function publish(value: T): Promise<void> {
     // Block publisher if buffer capacity is reached
     if (producing.size >= bufferCapacity) {
-      return new Promise(resolve => {
-        waitingProducers.add(() => {
-          publish(value);
-          resolve();
-        });
-      });
+      await wait();
     }
 
     // Create a promise that will resolve when the value is consumed
@@ -74,9 +76,8 @@ export function pubsub<T>(onStarve?: () => void, bufferCapacity: number = Infini
     }
     return new Promise<T>(resolve => {
       consuming.add(resolve);
-      if (onStarve) onStarve();
     });
   }
 
-  return { publish, consume, producing, consuming, buffer };
+  return { publish, consume, producing, consuming, buffer, wait };
 }
