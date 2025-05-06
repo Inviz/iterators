@@ -42,7 +42,7 @@ async function* _mapConcurrently<T, R>(
         if (producing.size >= concurrency) {
           await wait();
         }
-        await publish(iteratorFn(item, i++, input));
+        publish(iteratorFn(item, i++, input));
       }
     } finally {
       isDone = true;

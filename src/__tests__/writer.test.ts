@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { writer } from '../lib/writer';
 import { map } from '../map';
+import { pipe } from '../pipe';
 
 describe.concurrent('writer', () => {
   it('should push values through the pipe and process them', async () => {
@@ -97,29 +98,31 @@ describe.concurrent('writer', () => {
     expect(mockIterator.next).toHaveBeenCalledTimes(1);
   });
 
-  it('should handle complex transformation pipelines', async () => {
-    // Create a pipe with multiple transformations
-    const pipe = writer(input => {
-      // Apply multiple transformations
-      return map(
-        map(
-          map(input, (x: number) => x + 1),
-          x => x * 2
-        ),
-        x => `Result: ${x}`
-      );
-    });
+  it.concurrent('should handle complex transformation pipelines with pipe', async () => {
+    // Processing functions
+    const addOne = (x: number) => x + 1;
+    const multiplyByTwo = (x: number) => x * 2;
+    const formatResult = (x: number) => `Result: ${x}`;
 
-    // Push values
-    await pipe!.write(1);
-    await pipe!.write(2);
+    // Create test data
+    const items = [1, 2, 3, 4, 5];
 
-    // Read results
-    const result1 = await pipe!.iterator.next();
-    const result2 = await pipe!.iterator.next();
+    // Create a transformation pipeline using pipe and map
+    const pipeline = pipe(map(addOne), map(multiplyByTwo), map(formatResult));
 
-    // Check final transformation results
-    expect(result1.value).toBe('Result: 4'); // (1+1)*2
-    expect(result2.value).toBe('Result: 6'); // (2+1)*2
+    // Process items through the pipeline
+    const results: string[] = [];
+    for await (const result of pipeline(items)) {
+      results.push(result);
+    }
+
+    // Verify results match expected transformations
+    expect(results).toEqual([
+      'Result: 4', // (1+1)*2
+      'Result: 6', // (2+1)*2
+      'Result: 8', // (3+1)*2
+      'Result: 10', // (4+1)*2
+      'Result: 12', // (5+1)*2
+    ]);
   });
 });

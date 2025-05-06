@@ -1,3 +1,5 @@
+import { AnyIterable } from './types';
+
 type PipeFirst<A> = A extends (...args: any[]) => infer INPUT ? INPUT : A;
 type PipeOutput<A, Z> = A extends (...args: infer INPUT) => any ? (...args: INPUT) => Z : Z;
 
@@ -407,7 +409,7 @@ export function pipe(
 ): unknown {
   if (typeof value == 'function') {
     // @ts-ignore allow spreading
-    return (...args: any[]) => pipe(args, ...operations);
+    return (arg: AnyIterable<unknown>) => pipe(arg, value, ...operations);
   } else {
     let result = value;
     for (const operation of operations) {

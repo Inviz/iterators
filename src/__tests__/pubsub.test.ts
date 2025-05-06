@@ -195,6 +195,11 @@ describe.concurrent('pubsub', () => {
 
     // Now the third operation should be in progress
     expect(processingOrder).toContain('start-3');
+    expect(processingOrder).not.toContain('end-3');
+    expect(processingOrder).toContain('start-4');
+    expect(processingOrder).not.toContain('end-4');
+    await new Promise(setImmediate);
+    expect(processingOrder).toContain('start-3');
     expect(processingOrder).toContain('end-3');
     expect(processingOrder).toContain('start-4');
     expect(processingOrder).not.toContain('end-4');
@@ -212,6 +217,8 @@ describe.concurrent('pubsub', () => {
     );
     expect(processingOrder).not.toContain('end-5');
     await consume();
+    expect(processingOrder).not.toContain('end-5');
+    await new Promise(setImmediate);
     expect(processingOrder).toContain('end-5');
   });
 
