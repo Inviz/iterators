@@ -46,7 +46,7 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
         // value arrived ahead of consumer
         await new Promise<void>(resolve => {
           buffer.add(() => {
-            removeProducer(promise);
+            producing.delete(promise);
             resolve();
 
             // If we have waiting producers, signal one to proceed
@@ -57,7 +57,7 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
         });
       } else {
         // there is consumer waiting for value
-        removeProducer(promise);
+        producing.delete(promise);
         notify(consuming, value);
 
         // If we have waiting producers, signal one to proceed
@@ -68,18 +68,11 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
 
     promise.catch(e => {
       onReadError(e as Error);
-      removeProducer(promise);
+      producing.delete(promise);
     });
-    addProducer(promise);
-  }
-
-  function removeProducer(promise: Promise<R>) {
-    producing.delete(promise);
-  }
-
-  function addProducer(promise: Promise<R>) {
     producing.add(promise);
   }
+
   /**
    * Consume a value when it becomes available
    */
@@ -93,6 +86,9 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
     });
   }
 
+  /**
+   * Output values from the queue concurrently. Rethrow errors happened during input or transformation.
+   * */
   async function* output({
     onStart,
     onComplete,
@@ -121,6 +117,9 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
     }
   }
 
+  /**
+   * Consume iterator values into a queue without blocking the output
+   * */
   async function input(
     iterator: AnyIterable<T>,
     transform: (item: T, index: number, iterator: AnyIterable<T>) => R = (item, index, iterator) =>
