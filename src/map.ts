@@ -31,13 +31,11 @@ function _mapConcurrently<T, R>(
   iteratorFn: MapFunction<T, R>,
   concurrency: number
 ): AsyncGenerator<Awaited<R>> {
-  const { output, input } = pubsub<R, T>(concurrency, async () => {
-    input(iterator, iteratorFn);
-  });
+  const { output, input } = pubsub<R, T>(concurrency);
 
   // dont allow input stream to block the main loop
 
-  return output();
+  return output(undefined, () => input(iterator, iteratorFn));
 }
 
 /**

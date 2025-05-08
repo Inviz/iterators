@@ -233,4 +233,38 @@ describe.concurrent('map', () => {
       neverResolve();
     }
   );
+
+  it.concurrent('handles errors in processing function', async () => {
+    const items = [1, 2, 3, 4, 5];
+    const errorMessage = 'Processing error';
+
+    // Create a processor that throws an error for value 3
+    const processFn = vi.fn().mockImplementation(async (x: number) => {
+      await delay(10);
+      if (x === 3) {
+        throw new Error(errorMessage);
+      }
+      return x * 2;
+    });
+
+    const results: number[] = [];
+    const errors: Error[] = [];
+
+    // Process with concurrency of 2
+    try {
+      for await (const result of map(items, processFn, 2)) {
+        results.push(result);
+      }
+    } catch (error) {
+      errors.push(error as Error);
+    }
+
+    // Verify error was thrown
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe(errorMessage);
+
+    // Verify partial results were processed
+    expect(results.sort((a, b) => a - b)).toEqual([2, 4]); // before error
+    expect(processFn).toHaveBeenCalledTimes(4); // All items were attempted
+  });
 });

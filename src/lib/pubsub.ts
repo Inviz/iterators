@@ -5,7 +5,7 @@ import { AnyIterable } from '../types';
  * Used to coordinate values between producers and consumers
  * @param bufferCapacity Optional maximum number of items that can be produced ahead of consumption
  */
-export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: () => Promise<void>) {
+export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
   const producing = new Set<Promise<R>>();
   const consuming = new Set<(value: R) => void>();
   const buffer = new Set<() => R>();
@@ -65,6 +65,11 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: ()
       }
       return value;
     });
+
+    promise.catch(e => {
+      onReadError(e as Error);
+      removeProducer(promise);
+    });
     addProducer(promise);
   }
 
@@ -88,27 +93,34 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: ()
     });
   }
 
-  async function* output(onComplete?: () => void): AsyncGenerator<Awaited<R>> {
+  async function* output(
+    onComplete?: () => Promise<void>,
+    onStart?: () => Promise<void>
+  ): AsyncGenerator<Awaited<R>> {
     onStart?.();
-    while (true) {
-      var consumption = consume();
-      console.log('consumption', consumption);
-      const result = await Promise.race(isDone ? [consumption] : [isDonePromise, consumption]);
-      console.log('result', result, isDone, producing.size);
-      if (result == 10) debugger;
-      if (result === undefined) {
-        if (producing.size) {
-          yield consumption;
+    try {
+      while (true) {
+        var valueReady = consume();
+        console.log('consumption', valueReady, readComplete);
+        const result = await Promise.race([readComplete, readError, valueReady]);
+        console.log('consumption!', valueReady, readComplete, readError);
+        //console.log('result', result, isDone, producing.size);
+        if (result === undefined) {
+          if (producing.size) {
+            yield valueReady;
+          }
+        } else {
+          yield result;
         }
-      } else {
-        yield result;
+        if (!producing.size && isDone) {
+          console.log('break now');
+          break;
+        }
       }
-      if (isDone && !producing.size) {
-        console.log('break now');
-        break;
-      }
+    } finally {
+      console.log('onComplete');
+      await onComplete?.();
     }
-    await onComplete?.();
   }
 
   async function input(
@@ -124,21 +136,34 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: ()
         }
         publish(transform(item, i++, iterator));
       }
+    } catch (e) {
+      console.log('onReadError');
+      // redirect input error into output iterator
+      onReadError(e as Error);
     } finally {
-      console.log('map consumption done');
-      end();
-      console.log('/map consumption done');
+      onReadComplete();
     }
   }
 
-  let done: () => void;
-  let isDonePromise = new Promise<void>(resolve => {
-    done = resolve;
-  });
   let isDone = false;
-  const end = () => {
+  let _onReadComplete: () => void;
+  let onReadError = (e: Error) => {};
+  let readError = new Promise<Error>((resolve, reject) => {
+    onReadError = (e: Error) => {
+      console.log('onReadError!!', e);
+      reject(e);
+    };
+  });
+
+  let readComplete = new Promise<void>((resolve, reject) => {
+    _onReadComplete = resolve;
+  });
+  const onReadComplete = () => {
     isDone = true;
-    done();
+    _onReadComplete();
+    readComplete = new Promise<void>((resolve, reject) => {
+      _onReadComplete = resolve;
+    });
   };
 
   return {
@@ -150,6 +175,7 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: ()
     wait,
     input,
     output,
-    end,
+    onReadError,
+    onReadComplete,
   };
 }

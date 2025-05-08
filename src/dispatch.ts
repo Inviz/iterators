@@ -27,7 +27,7 @@ export function _dispatch<T, A, B, C, D, AA, BB, CC, DD>(
   const streamC = c ? writer(c, concurrency) : undefined;
   const streamD = d ? writer(d, concurrency) : undefined;
 
-  const { publish, consume, producing, wait, output: loop, end } = pubsub<Promise<T>>(concurrency);
+  const { output, input, onReadError, onReadComplete } = pubsub<Promise<T>>(concurrency);
   var isDone = false;
 
   const dispatcher = async (item: T, index: number, iterable: AnyIterable<T>) => {
@@ -43,31 +43,26 @@ export function _dispatch<T, A, B, C, D, AA, BB, CC, DD>(
     // yield item back to allow downstream to control the consumption
     return item;
   };
-
-  (async function consumer() {
-    try {
-      var i = 0;
-      for await (const item of iterator) {
-        if (producing.size >= concurrency) {
-          await wait();
-        }
-        publish(dispatcher(item, i++, iterator));
-      }
-    } finally {
-      end();
-      console.log('consumer done!!!', isDone);
+  let streams: (Promise<any> | undefined)[] = [];
+  return output(
+    async () => {
+      console.log('finishing');
+      await Promise.all([streamA?.end(), streamB?.end(), streamC?.end(), streamD?.end()]);
+      console.log('finished');
+      const result = await Promise.all(streams);
+      console.log('result', result);
+      return result;
+    },
+    async () => {
+      streams = [streamA?.start(), streamB?.start(), streamC?.start(), streamD?.start()];
+      input(iterator, dispatcher);
+      Promise.all(streams).catch(e => {
+        console.log('stream err', e);
+        onReadError(e);
+        onReadComplete();
+      });
     }
-  })();
-
-  const streams = [streamA?.start(), streamB?.start(), streamC?.start(), streamD?.start()];
-  return loop(async () => {
-    console.log('finishing');
-    await Promise.all([streamA?.end(), streamB?.end(), streamC?.end(), streamD?.end()]);
-    console.log('finished');
-    const result = await Promise.all(streams);
-    console.log('result', result);
-    return result;
-  });
+  );
 }
 
 export function dispatch<T, A, B, C, D, AA, BB, CC, DD>(

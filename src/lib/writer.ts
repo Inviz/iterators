@@ -22,7 +22,15 @@ export function writer<T, R>(
   concurrency?: number
 ) {
   // create queue for incoming values
-  const { publish, consume, producing, consuming, output: loop, end } = pubsub<T>(concurrency);
+  const {
+    publish,
+    consume,
+    producing,
+    consuming,
+    output: loop,
+    onReadComplete: end,
+    onReadError,
+  } = pubsub<T>(concurrency);
 
   let lastValue = 0;
 

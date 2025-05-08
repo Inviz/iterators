@@ -22,7 +22,14 @@ async function _accumulateConcurrently<T>(
   concurrency: number
 ): Promise<T[]> {
   const result: T[] = [];
-  const { publish, consume, producing, wait, output: loop, end } = pubsub<T>(concurrency);
+  const {
+    publish,
+    consume,
+    producing,
+    wait,
+    output: loop,
+    onReadComplete: end,
+  } = pubsub<T>(concurrency);
   let isDone = false;
 
   // Process the input stream without blocking the main loop

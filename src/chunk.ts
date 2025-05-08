@@ -42,7 +42,16 @@ function _chunkConcurrently<T>(
   size: number,
   concurrency: number
 ): AsyncGenerator<T[]> {
-  const { publish, consume, producing, wait, output, end } = pubsub<T[]>(concurrency, async () => {
+  const {
+    publish,
+    consume,
+    producing,
+    wait,
+    output,
+    onReadComplete: end,
+  } = pubsub<T[]>(concurrency);
+
+  return output(undefined, async () => {
     let buffer: T[] = [];
     // Process the input stream without blocking the main loop
     try {
@@ -71,8 +80,6 @@ function _chunkConcurrently<T>(
       end();
     }
   });
-
-  return output();
 }
 
 /**
