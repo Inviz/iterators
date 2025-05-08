@@ -42,43 +42,37 @@ function _chunkConcurrently<T>(
   size: number,
   concurrency: number
 ): AsyncGenerator<T[]> {
-  const {
-    publish,
-    consume,
-    producing,
-    wait,
-    output,
-    onReadComplete: end,
-  } = pubsub<T[]>(concurrency);
+  const { publish, producing, wait, output, onReadComplete } = pubsub<T[]>(concurrency);
 
-  return output(undefined, async () => {
-    let buffer: T[] = [];
-    // Process the input stream without blocking the main loop
-    try {
-      for await (const item of input) {
-        buffer.push(item);
+  return output({
+    onStart: async () => {
+      let buffer: T[] = [];
+      // Process the input stream without blocking the main loop
+      try {
+        for await (const item of input) {
+          buffer.push(item);
 
-        if (buffer.length >= size) {
+          if (buffer.length >= size) {
+            if (producing.size >= concurrency) {
+              await wait();
+            }
+            const chunk = buffer;
+            buffer = [];
+            publish(chunk);
+          }
+        }
+      } finally {
+        // Publish remaining items if any
+        if (buffer.length > 0) {
           if (producing.size >= concurrency) {
             await wait();
           }
-          const chunk = buffer;
-          buffer = [];
-          publish(chunk);
+          await publish(buffer);
+          await new Promise(setImmediate);
         }
+        onReadComplete();
       }
-    } finally {
-      // Publish remaining items if any
-      if (buffer.length > 0) {
-        if (producing.size >= concurrency) {
-          await wait();
-        }
-        console.log('publishing', buffer);
-        await publish(buffer);
-        await new Promise(setImmediate);
-      }
-      end();
-    }
+    },
   });
 }
 

@@ -93,18 +93,18 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
     });
   }
 
-  async function* output(
-    onComplete?: () => Promise<void>,
-    onStart?: () => Promise<void>
-  ): AsyncGenerator<Awaited<R>> {
-    onStart?.();
+  async function* output({
+    onStart,
+    onComplete,
+  }: {
+    onStart?: () => Promise<void>;
+    onComplete?: () => Promise<void>;
+  } = {}): AsyncGenerator<Awaited<R>> {
     try {
+      onStart?.();
       while (true) {
         var valueReady = consume();
-        console.log('consumption', valueReady, readComplete);
         const result = await Promise.race([readComplete, readError, valueReady]);
-        console.log('consumption!', valueReady, readComplete, readError);
-        //console.log('result', result, isDone, producing.size);
         if (result === undefined) {
           if (producing.size) {
             yield valueReady;
@@ -113,12 +113,10 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
           yield result;
         }
         if (!producing.size && isDone) {
-          console.log('break now');
           break;
         }
       }
     } finally {
-      console.log('onComplete');
       await onComplete?.();
     }
   }
@@ -137,8 +135,6 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
         publish(transform(item, i++, iterator));
       }
     } catch (e) {
-      console.log('onReadError');
-      // redirect input error into output iterator
       onReadError(e as Error);
     } finally {
       onReadComplete();
@@ -148,11 +144,8 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
   let isDone = false;
   let _onReadComplete: () => void;
   let onReadError = (e: Error) => {};
-  let readError = new Promise<Error>((resolve, reject) => {
-    onReadError = (e: Error) => {
-      console.log('onReadError!!', e);
-      reject(e);
-    };
+  let readError = new Promise<void>((resolve, reject) => {
+    onReadError = reject;
   });
 
   let readComplete = new Promise<void>((resolve, reject) => {

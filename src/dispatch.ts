@@ -2,6 +2,13 @@ import { pubsub } from './lib/pubsub';
 import { writer } from './lib/writer';
 import { AnyIterable, MaybePromise } from './types';
 
+export type Branches = Record<string, (input: AnyIterable<any>) => AnyIterable<any>>;
+export type BranchValues<R extends Branches> = {
+  [key in keyof R]?: (R[key] extends (input: AnyIterable<infer T>) => any ? T : never) | undefined;
+};
+export type BranchWriters<R extends Branches> = {
+  [key in keyof R]: ReturnType<typeof writer>;
+};
 /**
  * Partition function takes a splitter function and multiple processors.
  * The splitter function splits each input item into a tuple of parts.
@@ -13,79 +20,66 @@ import { AnyIterable, MaybePromise } from './types';
  * @param processors Processing functions, one for each position in the tuple
  * @returns A function that takes an iterable input and returns processed results
  */
-export function _dispatch<T, A, B, C, D, AA, BB, CC, DD>(
+export function _dispatch<T, R extends Branches>(
   iterator: AnyIterable<T>,
-  splitter: (item: T) => MaybePromise<readonly [a?: A, b?: B, c?: C, d?: D]>,
-  a?: (input: AnyIterable<A>) => AnyIterable<AA>,
-  b?: (input: AnyIterable<B>) => AnyIterable<BB>,
-  c?: (input: AnyIterable<C>) => AnyIterable<CC>,
-  d?: (input: AnyIterable<D>) => AnyIterable<DD>,
+  splitter: (item: T) => MaybePromise<BranchValues<R>>,
+  branches: R,
   concurrency: number = 1
 ): AsyncGenerator<T> {
-  const streamA = a ? writer(a, concurrency) : undefined;
-  const streamB = b ? writer(b, concurrency) : undefined;
-  const streamC = c ? writer(c, concurrency) : undefined;
-  const streamD = d ? writer(d, concurrency) : undefined;
+  const writers = Object.entries(branches).reduce((acc, [key, branch]) => {
+    return { ...acc, [key]: writer(branch, concurrency) };
+  }, {} as BranchWriters<R>);
 
   const { output, input, onReadError, onReadComplete } = pubsub<Promise<T>>(concurrency);
   var isDone = false;
 
   const dispatcher = async (item: T, index: number, iterable: AnyIterable<T>) => {
-    const [a, b, c, d] = await splitter(item);
+    const branched = await splitter(item);
 
-    await Promise.all([
-      a ? streamA?.write(a) : undefined,
-      b ? streamB?.write(b) : undefined,
-      c ? streamC?.write(c) : undefined,
-      d ? streamD?.write(d) : undefined,
-    ]);
+    await Promise.all(
+      Object.entries(branched).map(([key, value]) =>
+        value === undefined ? undefined : writers[key as keyof typeof writers]?.write(value)
+      )
+    );
 
     // yield item back to allow downstream to control the consumption
     return item;
   };
   let streams: (Promise<any> | undefined)[] = [];
-  return output(
-    async () => {
-      console.log('finishing');
-      await Promise.all([streamA?.end(), streamB?.end(), streamC?.end(), streamD?.end()]);
-      console.log('finished');
-      const result = await Promise.all(streams);
-      console.log('result', result);
-      return result;
-    },
-    async () => {
-      streams = [streamA?.start(), streamB?.start(), streamC?.start(), streamD?.start()];
+  return output({
+    onStart: async () => {
+      streams = Object.values(writers).map(writer => writer.start());
       input(iterator, dispatcher);
       Promise.all(streams).catch(e => {
-        console.log('stream err', e);
         onReadError(e);
         onReadComplete();
       });
-    }
-  );
+    },
+    onComplete: async () => {
+      await Promise.all(Object.values(writers).map(writer => writer.end()));
+      // allow streams to throw errors
+      await Promise.all(streams);
+    },
+  });
 }
 
-export function dispatch<T, A, B, C, D, AA, BB, CC, DD>(
-  splitter: (item: T) => MaybePromise<readonly [a?: A, b?: B, c?: C, d?: D]>,
-  a?: (input: AnyIterable<A>) => AnyIterable<AA>,
-  b?: (input: AnyIterable<B>) => AnyIterable<BB>,
-  c?: (input: AnyIterable<C>) => AnyIterable<CC>,
-  d?: (input: AnyIterable<D>) => AnyIterable<DD>,
+export function dispatch<T, R extends Branches>(
+  input: AnyIterable<T>,
+  splitter: (item: T) => MaybePromise<BranchValues<R>>,
+  branches: R,
+  concurrency?: number
+): AsyncGenerator<T>;
+
+export function dispatch<T, R extends Branches>(
+  splitter: (item: T) => MaybePromise<BranchValues<R>>,
+  branches: R,
   concurrency?: number
 ): (iterator: AnyIterable<T>) => AsyncGenerator<T>;
 
-export function dispatch<T>(
-  input: any,
-  splitter: any,
-  a: any,
-  b: any,
-  c: any,
-  d: any,
-  concurrency?: any
-) {
+export function dispatch<T>(input: any, splitter: any, branches: any, concurrency?: any) {
   if (typeof input === 'function') {
-    return (_input: AnyIterable<T>) => dispatch(_input, input, splitter, a, b, c, d);
+    return (_input: AnyIterable<T>) => dispatch(_input, input, splitter, branches);
   } else {
-    return _dispatch(input, splitter, a, b, c, d, concurrency);
+    return _dispatch(input, splitter, branches, concurrency);
   }
 }

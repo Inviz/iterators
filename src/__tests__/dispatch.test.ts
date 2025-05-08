@@ -23,7 +23,7 @@ describe.concurrent('dispatch', () => {
     // Create the test pipeline
     const result = pipe(
       [1, 2, 3, 4, 5],
-      dispatch(x => [x] as const, slowProcessor)
+      dispatch(x => ({ slow: x }), { slow: slowProcessor })
     );
 
     // Collect results
@@ -75,14 +75,13 @@ describe.concurrent('dispatch', () => {
     });
 
     // Split odd numbers to stream A, even numbers to stream B
-    const splitter = (x: number) =>
-      x % 2 === 1 ? ([x, undefined] as const) : ([undefined, x] as const);
+    const splitter = (x: number) => ({
+      streamA: x % 2 === 1 ? x : undefined,
+      streamB: x % 2 === 0 ? x : undefined,
+    });
 
     // Process inputs
-    const result = pipe(
-      [1, 2, 3, 4, 5, 6],
-      dispatch(splitter, streamA, streamB, undefined, undefined, 2)
-    );
+    const result = pipe([1, 2, 3, 4, 5, 6], dispatch(splitter, { streamA, streamB }, 2));
 
     const collected = await accumulate(result);
 
@@ -121,10 +120,10 @@ describe.concurrent('dispatch', () => {
     });
 
     // Send all values to both streams
-    const splitter = (x: number) => [x, x] as const;
+    const splitter = (x: number) => ({ streamA: x, streamB: x });
 
     // Process inputs - should maintain original order despite different processing times
-    const result = pipe([1, 2, 3, 4, 5], dispatch(splitter, streamA, streamB));
+    const result = pipe([1, 2, 3, 4, 5], dispatch(splitter, { streamA, streamB }));
 
     const collected = await accumulate(result);
 
@@ -180,10 +179,13 @@ describe.concurrent('dispatch', () => {
     );
 
     // Split input into game and table
-    const splitter = ([game, table]: [Game, Table]) => [game, table] as const;
+    const splitter = ([game, table]: [Game, Table]) => ({
+      gameProcessor: game,
+      tableProcessor: table,
+    });
 
     // Create pipeline similar to parse-hands.ts
-    const result = pipe(inputData, dispatch(splitter, gameProcessor, tableProcessor));
+    const result = pipe(inputData, dispatch(splitter, { gameProcessor, tableProcessor }));
 
     // Process all data
     const output = await accumulate(result);
@@ -224,18 +226,14 @@ describe.concurrent('dispatch', () => {
     });
 
     // Conditional splitter based on divisibility
-    const splitter = (x: number) => {
-      const result: [number?, number?, number?] = [];
-
-      if (x % 2 === 0) result[0] = x;
-      if (x % 3 === 0) result[1] = x;
-      if (x % 5 === 0) result[2] = x;
-
-      return result;
-    };
+    const splitter = (x: number) => ({
+      streamA: x % 2 === 0 ? x : undefined,
+      streamB: x % 3 === 0 ? x : undefined,
+      streamC: x % 5 === 0 ? x : undefined,
+    });
 
     // Create the pipeline
-    const result = pipe(inputData, dispatch(splitter, streamA, streamB, streamC));
+    const result = pipe(inputData, dispatch(splitter, { streamA, streamB, streamC }));
 
     // Process all data
     const output = await accumulate(result);
@@ -264,11 +262,8 @@ describe.concurrent('dispatch', () => {
     const result = pipe(
       inputData,
       dispatch(
-        (x: number) => [x] as const,
-        map(trackedProcessor, concurrencyLimit),
-        undefined,
-        undefined,
-        undefined,
+        (x: number) => ({ streamA: x }),
+        { streamA: map(trackedProcessor, concurrencyLimit) },
         concurrencyLimit
       )
     );
@@ -294,7 +289,9 @@ describe.concurrent('dispatch', () => {
     });
 
     // Create a curried dispatch function
-    const result = dispatch([1, 2, 3, 4, 5], (x: number) => [x] as const, processor);
+    const result = dispatch([1, 2, 3, 4, 5], (x: number) => ({ streamA: x }), {
+      streamA: processor,
+    });
 
     // Process all data
     const output = await accumulate(result);
@@ -316,7 +313,7 @@ describe.concurrent('dispatch', () => {
     // Process empty array
     const result = pipe(
       [],
-      dispatch((x: number) => [x] as const, processor)
+      dispatch((x: number) => ({ streamA: x }), { streamA: processor })
     );
 
     // Process all data
@@ -336,11 +333,11 @@ describe.concurrent('dispatch', () => {
       if (x === 3) {
         throw new Error('Test error');
       }
-      return [x] as const;
+      return { streamA: x };
     };
 
     // Create pipeline
-    const result = pipe([1, 2, 3, 4, 5], dispatch(splitter, processor));
+    const result = pipe([1, 2, 3, 4, 5], dispatch(splitter, { streamA: processor }));
 
     // The error should propagate
     await expect(accumulate(result)).rejects.toThrow('Test error');
@@ -358,7 +355,7 @@ describe.concurrent('dispatch', () => {
     // Create pipeline
     const result = pipe(
       [1, 2, 3, 4, 5],
-      dispatch((x: number) => [x] as const, processor)
+      dispatch((x: number) => ({ streamA: x }), { streamA: processor })
     );
 
     // The error should propagate
@@ -381,15 +378,13 @@ describe.concurrent('dispatch', () => {
     });
 
     // Splitter that returns nullish values
-    const splitter = (x: number): [number?, number?] => {
-      // Alternate between sending to A, B, or neither
-      if (x % 3 === 0) return [undefined, x]; // Send to B only
-      if (x % 3 === 1) return [x, undefined]; // Send to A only
-      return [undefined, undefined]; // Send to neither
-    };
+    const splitter = (x: number) => ({
+      streamA: x % 3 === 1 ? x : undefined,
+      streamB: x % 3 === 0 ? x : undefined,
+    });
 
     // Create pipeline
-    const result = pipe([1, 2, 3, 4, 5, 6], dispatch(splitter, streamA, streamB));
+    const result = pipe([1, 2, 3, 4, 5, 6], dispatch(splitter, { streamA, streamB }));
 
     // Process all data
     const output = await accumulate(result);
@@ -430,7 +425,7 @@ describe.concurrent('dispatch', () => {
     // Create the pipeline with dispatch and slow consumer
     const result = pipe(
       [1, 2, 3],
-      dispatch(x => [x] as const, fastProcessor),
+      dispatch(x => ({ streamA: x }), { streamA: fastProcessor }),
       slowIterator
     );
 
@@ -501,17 +496,14 @@ describe.concurrent('Concurrency control', () => {
     // The actual splitter function that uses the tracked function
     const splitter = async (x: number) => {
       const result = await trackedSplitter(x);
-      return [result] as const;
+      return { streamA: result };
     };
 
     // Simple processor
     const processor = map((x: number) => x * 2);
 
     // Create the pipeline with limited concurrency
-    const result = pipe(
-      inputData,
-      dispatch(splitter, processor, undefined, undefined, undefined, concurrencyLimit)
-    );
+    const result = pipe(inputData, dispatch(splitter, { streamA: processor }, concurrencyLimit));
 
     // Process all data
     const output = await accumulate(result);
@@ -558,13 +550,12 @@ describe.concurrent('Concurrency control', () => {
     const streamB = map(trackedProcessorB, streamBConcurrency);
 
     // Route odd numbers to stream A, even numbers to stream B
-    const splitter = (x: number) =>
-      x % 2 === 1 ? ([x, undefined] as const) : ([undefined, x] as const);
+    const splitter = (x: number) => (x % 2 === 1 ? { streamA: x } : { streamB: x });
 
     // Create the pipeline with configured concurrency
     const result = pipe(
       slowInputGenerator(),
-      dispatch(splitter, streamA, streamB, undefined, undefined, totalConcurrency)
+      dispatch(splitter, { streamA, streamB }, totalConcurrency)
     );
 
     // Process all data

@@ -38,17 +38,19 @@ const pipeline = I.pipe(
   I.concat(), // flatten stream again
   // Split each record into two parts and process them in parallel streams
   I.dispatch(
-    record => [record.metadata, record.data], // Split record into metadata and data
-    // Process metadata in batches of 1000
-    I.pipe(
-      I.chunk(1000),
-      I.map(writeMetadata, 2) // Process 2 metadata batches concurrently
-    ),
-    // Process data in batches of 2000
-    I.pipe(
-      I.chunk(2000),
-      I.map(writeData, 3) // Process 3 data batches concurrently
-    )
+    record => ({ meta: record.metadata, data: record.metadata }), // Split record into metadata and data
+    {
+      // Process metadata in batches of 1000
+      meta: I.pipe(
+        I.chunk(1000),
+        I.map(writeMetadata, 2) // Process 2 metadata batches concurrently
+      ),
+      // Process data in batches of 2000
+      data: I.pipe(
+        I.chunk(2000),
+        I.map(writeData, 3) // Process 3 data batches concurrently
+      ),
+    }
   )
 );
 
@@ -172,6 +174,60 @@ The `concat(concurrency?: number, buffer?: number)` function processes multiple 
      }
    ```
 
+### Why Concurrent Dispatch?
+
+The dispatch function enables several powerful patterns:
+
+1. **Conditional Branching**: Route items to different processors based on their properties
+
+   ```typescript
+   // Route items to different processors based on their needs
+   const pipeline = I.pipe(
+     items,
+     I.dispatch(
+       item => {
+         validate: item.needsValidation ? item : undefined,
+         enrich: item.needsEnrichment ? item : undefined,
+         transform: item.needsTransformation ? item : undefined,
+       }
+       { validate, enrich, transform }
+     )
+   );
+   ```
+
+2. **Record Splitting**: Process different parts of a record in parallel streams
+
+   ```typescript
+   // Split each record into metadata and data for parallel processing
+   const pipeline = I.pipe(
+     records,
+     I.dispatch(
+       ({ data, meta }) => ({ meta, data }), // Destruct record into two properties
+       {
+         meta: I.pipe(I.chunk(1000), I.map(writeMetadata, 2)),
+         data: I.pipe(I.chunk(2000), I.map(writeData, 3)),
+       }
+     )
+   );
+   ```
+
+3. **Fan-out**: Process the same item through multiple streams simultaneously
+
+   ```typescript
+   // Process each item through multiple streams in parallel
+   const pipeline = I.pipe(
+     items,
+     I.dispatch(
+       item => ({ a: item, b: item, c: item }), // Send the same item to all three processors
+       {
+         a: I.pipe(I.map(processA), I.map(writeToFileA)),
+         b: I.pipe(I.map(processB), I.map(writeToFileB)),
+         c: I.pipe(I.map(processC), I.map(writeToFileC)),
+       }
+     )
+   );
+   ```
+
 ### Advanced Concurrency Patterns
 
 These utilities enable sophisticated concurrency patterns for maximizing throughput in async processing pipelines:
@@ -287,6 +343,15 @@ Groups elements from an iterable into arrays of specified size.
 - **size**: Number of elements to include in each chunk
 - **Returns**: A function that takes an iterable and returns an async generator yielding arrays of size `size`
 
+### dispatch(splitter, ...processors, concurrency)
+
+Routes items from a single input iterable to multiple processing streams based on a splitter function, creating a one-directional fan-out pattern.
+
+- **splitter**: Function that determines which processors should receive each input item
+- **processors**: Processing functions for each possible output from the splitter
+- **concurrency**: Maximum number of concurrent `splitter` operations (default: 1)
+- **Returns**: A function that takes an iterable and returns an async generator
+
 ### writer(callback, concurrency)
 
 Turns an async pipe into a writable stream destination that you can push values into, inverting the typical iterator flow.
@@ -306,71 +371,6 @@ This pattern is ideal for:
 2. **External Control**: When you need the source to control the flow of data
 3. **Sink Operations**: Creating pipeline endpoints that consume data
 4. **Closing Streams**: When you need explicit control over when a stream ends
-
-### dispatch(splitter, ...processors, concurrency)
-
-Routes items from a single input iterable to multiple processing streams based on a splitter function, creating a one-directional fan-out pattern.
-
-- **splitter**: Function that determines which processors should receive each input item
-- **processors**: Processing functions for each possible output from the splitter
-- **concurrency**: Maximum number of concurrent `splitter` operations (default: 1)
-- **Returns**: A function that takes an iterable and returns an async generator
-
-The dispatch function enables several powerful patterns:
-
-1. **Conditional Branching**: Route items to different processors based on their properties
-
-   ```typescript
-   // Route items to different processors based on their needs
-   const pipeline = I.pipe(
-     items,
-     I.dispatch(
-       item => [
-         item.needsValidation ? item : undefined,
-         item.needsEnrichment ? item : undefined,
-         item.needsTransformation ? item : undefined,
-       ],
-       validateItem,
-       enrichItem,
-       transformItem
-     )
-   );
-   ```
-
-2. **Record Splitting**: Process different parts of a record in parallel streams
-
-   ```typescript
-   // Split each record into metadata and data for parallel processing
-   const pipeline = I.pipe(
-     records,
-     I.dispatch(
-       record => [record.metadata, record.data], // Split record into two parts
-       I.pipe(
-         I.chunk(1000),
-         I.map(writeMetadata, 2) // Process metadata in batches
-       ),
-       I.pipe(
-         I.chunk(2000),
-         I.map(writeData, 3) // Process data in batches
-       )
-     )
-   );
-   ```
-
-3. **Fan-out**: Process the same item through multiple streams simultaneously
-
-   ```typescript
-   // Process each item through multiple streams in parallel
-   const pipeline = I.pipe(
-     items,
-     I.dispatch(
-       item => [item, item, item], // Send the same item to all three processors
-       I.pipe(I.map(processA), I.map(writeToFileA)),
-       I.pipe(I.map(processB), I.map(writeToFileB)),
-       I.pipe(I.map(processC), I.map(writeToFileC))
-     )
-   );
-   ```
 
 ## Todo
 

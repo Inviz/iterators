@@ -35,7 +35,9 @@ function _mapConcurrently<T, R>(
 
   // dont allow input stream to block the main loop
 
-  return output(undefined, () => input(iterator, iteratorFn));
+  return output({
+    onStart: () => input(iterator, iteratorFn),
+  });
 }
 
 /**
