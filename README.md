@@ -35,7 +35,21 @@ const pipeline = I.pipe(
   I.chunk(20), // 20 results per chunk
   I.take(10), // dont go over 10 batches
   I.map(processChunk, 2), // process 2 batches in parallel
-  I.concat() // flatten stream again
+  I.concat(), // flatten stream again
+  // Split each record into two parts and process them in parallel streams
+  I.dispatch(
+    record => [record.metadata, record.data], // Split record into metadata and data
+    // Process metadata in batches of 1000
+    I.pipe(
+      I.chunk(1000),
+      I.map(writeMetadata, 2) // Process 2 metadata batches concurrently
+    ),
+    // Process data in batches of 2000
+    I.pipe(
+      I.chunk(2000),
+      I.map(writeData, 3) // Process 3 data batches concurrently
+    )
+  )
 );
 
 // Looping over the pipeline starts computation
@@ -47,24 +61,6 @@ for await (const result of pipeline) {
     // 20 items from first batch, 5 items from second batch, and one full batch of 20 buffered by processChunk
     break;
   }
-}
-
-// Process items in batches for efficiency, then flatten results
-const efficientPipeline = I.pipe(
-  sourceItems,
-  I.chunk(100), // Group into batches of 100 items
-  I.map(async batch => {
-    // Process each batch as a unit (e.g., bulk database operations)
-    const results = await db.bulkInsert(batch);
-    return results; // Returns array of results
-  }, 3), // Process 3 batches concurrently
-  I.concat(), // Flatten batch results back to individual items
-  I.map(enrichItem) // Process individual results
-);
-
-for await (const item of efficientPipeline) {
-  // Each item is processed individually after batch operations
-  console.log(item);
 }
 ```
 
@@ -291,10 +287,94 @@ Groups elements from an iterable into arrays of specified size.
 - **size**: Number of elements to include in each chunk
 - **Returns**: A function that takes an iterable and returns an async generator yielding arrays of size `size`
 
+### writer(callback, concurrency)
+
+Turns an async pipe into a writable stream destination that you can push values into, inverting the typical iterator flow.
+
+- **callback**: A function that processes an iterable and returns another iterable
+- **concurrency**: Optional concurrency limit for the underlying queue buffer
+- **Returns**: An object with the following methods:
+  - **write**: Pushes a value through the pipe and returns the processed result
+  - **publish**: Adds a value to the processing queue without waiting for the result
+  - **end**: Signals the end of input and closes the stream
+
+Writer inverts the typical generator flow by allowing the source to push messages into the pipeline rather than the pipeline pulling from the source. It automatically respects backpressure - if the pipe is slow to process values, the source will be throttled to prevent overwhelming the system.
+
+This pattern is ideal for:
+
+1. **Event-driven Sources**: Process events from callbacks or event emitters
+2. **External Control**: When you need the source to control the flow of data
+3. **Sink Operations**: Creating pipeline endpoints that consume data
+4. **Closing Streams**: When you need explicit control over when a stream ends
+
+### dispatch(splitter, ...processors, concurrency)
+
+Routes items from a single input iterable to multiple processing streams based on a splitter function, creating a one-directional fan-out pattern.
+
+- **splitter**: Function that determines which processors should receive each input item
+- **processors**: Processing functions for each possible output from the splitter
+- **concurrency**: Maximum number of concurrent `splitter` operations (default: 1)
+- **Returns**: A function that takes an iterable and returns an async generator
+
+The dispatch function enables several powerful patterns:
+
+1. **Conditional Branching**: Route items to different processors based on their properties
+
+   ```typescript
+   // Route items to different processors based on their needs
+   const pipeline = I.pipe(
+     items,
+     I.dispatch(
+       item => [
+         item.needsValidation ? item : undefined,
+         item.needsEnrichment ? item : undefined,
+         item.needsTransformation ? item : undefined,
+       ],
+       validateItem,
+       enrichItem,
+       transformItem
+     )
+   );
+   ```
+
+2. **Record Splitting**: Process different parts of a record in parallel streams
+
+   ```typescript
+   // Split each record into metadata and data for parallel processing
+   const pipeline = I.pipe(
+     records,
+     I.dispatch(
+       record => [record.metadata, record.data], // Split record into two parts
+       I.pipe(
+         I.chunk(1000),
+         I.map(writeMetadata, 2) // Process metadata in batches
+       ),
+       I.pipe(
+         I.chunk(2000),
+         I.map(writeData, 3) // Process data in batches
+       )
+     )
+   );
+   ```
+
+3. **Fan-out**: Process the same item through multiple streams simultaneously
+
+   ```typescript
+   // Process each item through multiple streams in parallel
+   const pipeline = I.pipe(
+     items,
+     I.dispatch(
+       item => [item, item, item], // Send the same item to all three processors
+       I.pipe(I.map(processA), I.map(writeToFileA)),
+       I.pipe(I.map(processB), I.map(writeToFileB)),
+       I.pipe(I.map(processC), I.map(writeToFileC))
+     )
+   );
+   ```
+
 ## Todo
 
 - Eager/lazy control for `concat()`
-- `I.partition` to fork pipes
 
 ## License
 

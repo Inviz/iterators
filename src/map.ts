@@ -26,32 +26,18 @@ async function* _map<T, R>(
  * @param iteratorFn Function to apply to each item in the iterable
  * @param concurrency Maximum number of map operations
  */
-async function* _mapConcurrently<T, R>(
-  input: AnyIterable<T>,
+function _mapConcurrently<T, R>(
+  iterator: AnyIterable<T>,
   iteratorFn: MapFunction<T, R>,
   concurrency: number
 ): AsyncGenerator<Awaited<R>> {
-  const { publish, consume, producing, wait } = pubsub<R>(concurrency);
-  var isDone = false;
+  const { output, input } = pubsub<R, T>(concurrency, async () => {
+    input(iterator, iteratorFn);
+  });
 
   // dont allow input stream to block the main loop
-  (async () => {
-    try {
-      var i = 0;
-      for await (const item of input) {
-        if (producing.size >= concurrency) {
-          await wait();
-        }
-        publish(iteratorFn(item, i++, input));
-      }
-    } finally {
-      isDone = true;
-    }
-  })();
 
-  while (!isDone || producing.size) {
-    yield await consume();
-  }
+  return output();
 }
 
 /**

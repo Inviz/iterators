@@ -1,12 +1,14 @@
+import { AnyIterable } from '../types';
+
 /**
  * Creates a simple publish-subscribe mechanism for async iterators
  * Used to coordinate values between producers and consumers
  * @param bufferCapacity Optional maximum number of items that can be produced ahead of consumption
  */
-export function pubsub<T>(bufferCapacity: number = Infinity) {
-  const producing = new Set<Promise<T>>();
-  const consuming = new Set<(value: T) => void>();
-  const buffer = new Set<() => T>();
+export function pubsub<R, T = R>(bufferCapacity: number = Infinity, onStart?: () => Promise<void>) {
+  const producing = new Set<Promise<R>>();
+  const consuming = new Set<(value: R) => void>();
+  const buffer = new Set<() => R>();
   const waitingProducers = new Set<() => void>();
   /**
    * Helper to take the first callback from a set, remove it, and execute it
@@ -32,7 +34,7 @@ export function pubsub<T>(bufferCapacity: number = Infinity) {
   /**
    * Publish a value to be consumed. If queue is full, resolves when space is available.
    */
-  async function publish(value: T): Promise<void> {
+  async function publish(value: R): Promise<void> {
     // Block publisher if buffer capacity is reached
     if (producing.size >= bufferCapacity) {
       await wait();
@@ -44,7 +46,7 @@ export function pubsub<T>(bufferCapacity: number = Infinity) {
         // value arrived ahead of consumer
         await new Promise<void>(resolve => {
           buffer.add(() => {
-            producing.delete(promise);
+            removeProducer(promise);
             resolve();
 
             // If we have waiting producers, signal one to proceed
@@ -55,7 +57,7 @@ export function pubsub<T>(bufferCapacity: number = Infinity) {
         });
       } else {
         // there is consumer waiting for value
-        producing.delete(promise);
+        removeProducer(promise);
         notify(consuming, value);
 
         // If we have waiting producers, signal one to proceed
@@ -63,21 +65,91 @@ export function pubsub<T>(bufferCapacity: number = Infinity) {
       }
       return value;
     });
-    producing.add(promise);
+    addProducer(promise);
   }
 
+  function removeProducer(promise: Promise<R>) {
+    producing.delete(promise);
+  }
+
+  function addProducer(promise: Promise<R>) {
+    producing.add(promise);
+  }
   /**
    * Consume a value when it becomes available
    */
-  async function consume(): Promise<T> {
+  async function consume(): Promise<R> {
     const result = notify(buffer);
     if (result !== undefined) {
       return Promise.resolve(result);
     }
-    return new Promise<T>(resolve => {
+    return new Promise<R>(resolve => {
       consuming.add(resolve);
     });
   }
 
-  return { publish, consume, producing, consuming, buffer, wait };
+  async function* output(onComplete?: () => void): AsyncGenerator<Awaited<R>> {
+    onStart?.();
+    while (true) {
+      var consumption = consume();
+      console.log('consumption', consumption);
+      const result = await Promise.race(isDone ? [consumption] : [isDonePromise, consumption]);
+      console.log('result', result, isDone, producing.size);
+      if (result == 10) debugger;
+      if (result === undefined) {
+        if (producing.size) {
+          yield consumption;
+        }
+      } else {
+        yield result;
+      }
+      if (isDone && !producing.size) {
+        console.log('break now');
+        break;
+      }
+    }
+    await onComplete?.();
+  }
+
+  async function input(
+    iterator: AnyIterable<T>,
+    transform: (item: T, index: number, iterator: AnyIterable<T>) => R = (item, index, iterator) =>
+      item as any as R
+  ) {
+    try {
+      var i = 0;
+      for await (const item of iterator) {
+        if (producing.size >= bufferCapacity) {
+          await wait();
+        }
+        publish(transform(item, i++, iterator));
+      }
+    } finally {
+      console.log('map consumption done');
+      end();
+      console.log('/map consumption done');
+    }
+  }
+
+  let done: () => void;
+  let isDonePromise = new Promise<void>(resolve => {
+    done = resolve;
+  });
+  let isDone = false;
+  const end = () => {
+    isDone = true;
+    done();
+  };
+
+  return {
+    publish,
+    consume,
+    producing,
+    consuming,
+    buffer,
+    wait,
+    input,
+    output,
+    end,
+  };
 }

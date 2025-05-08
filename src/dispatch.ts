@@ -1,5 +1,5 @@
+import { pubsub } from './lib/pubsub';
 import { writer } from './lib/writer';
-import { map } from './map';
 import { AnyIterable, MaybePromise } from './types';
 
 /**
@@ -13,51 +13,65 @@ import { AnyIterable, MaybePromise } from './types';
  * @param processors Processing functions, one for each position in the tuple
  * @returns A function that takes an iterable input and returns processed results
  */
-export async function* _dispatch<T, A, B, C, D, AA, BB, CC, DD>(
+export function _dispatch<T, A, B, C, D, AA, BB, CC, DD>(
   iterator: AnyIterable<T>,
-  splitter: (item: T) => MaybePromise<[a?: A, b?: B, c?: C, d?: D]>,
+  splitter: (item: T) => MaybePromise<readonly [a?: A, b?: B, c?: C, d?: D]>,
   a?: (input: AnyIterable<A>) => AnyIterable<AA>,
   b?: (input: AnyIterable<B>) => AnyIterable<BB>,
   c?: (input: AnyIterable<C>) => AnyIterable<CC>,
   d?: (input: AnyIterable<D>) => AnyIterable<DD>,
-  concurrency?: number
+  concurrency: number = 1
 ): AsyncGenerator<T> {
-  const pushA = a ? writer(a, concurrency)?.write : undefined;
-  const pushB = b ? writer(b, concurrency)?.write : undefined;
-  const pushC = c ? writer(c, concurrency)?.write : undefined;
-  const pushD = d ? writer(d, concurrency)?.write : undefined;
+  const streamA = a ? writer(a, concurrency) : undefined;
+  const streamB = b ? writer(b, concurrency) : undefined;
+  const streamC = c ? writer(c, concurrency) : undefined;
+  const streamD = d ? writer(d, concurrency) : undefined;
 
-  return map(
-    iterator,
-    async item => {
-      const [a, b, c, d] = await splitter(item);
+  const { publish, consume, producing, wait, output: loop, end } = pubsub<Promise<T>>(concurrency);
+  var isDone = false;
 
-      await Promise.all([
-        a ? pushA?.(a) : undefined,
-        b ? pushB?.(b) : undefined,
-        c ? pushC?.(c) : undefined,
-        d ? pushD?.(d) : undefined,
-      ]);
+  const dispatcher = async (item: T, index: number, iterable: AnyIterable<T>) => {
+    const [a, b, c, d] = await splitter(item);
 
-      // yield item back to allow downstream to control the consumption
-      return item;
-    },
-    concurrency
-  );
+    await Promise.all([
+      a ? streamA?.write(a) : undefined,
+      b ? streamB?.write(b) : undefined,
+      c ? streamC?.write(c) : undefined,
+      d ? streamD?.write(d) : undefined,
+    ]);
+
+    // yield item back to allow downstream to control the consumption
+    return item;
+  };
+
+  (async function consumer() {
+    try {
+      var i = 0;
+      for await (const item of iterator) {
+        if (producing.size >= concurrency) {
+          await wait();
+        }
+        publish(dispatcher(item, i++, iterator));
+      }
+    } finally {
+      end();
+      console.log('consumer done!!!', isDone);
+    }
+  })();
+
+  const streams = [streamA?.start(), streamB?.start(), streamC?.start(), streamD?.start()];
+  return loop(async () => {
+    console.log('finishing');
+    await Promise.all([streamA?.end(), streamB?.end(), streamC?.end(), streamD?.end()]);
+    console.log('finished');
+    const result = await Promise.all(streams);
+    console.log('result', result);
+    return result;
+  });
 }
 
 export function dispatch<T, A, B, C, D, AA, BB, CC, DD>(
-  iterator: AnyIterable<T>,
-  splitter: (item: T) => MaybePromise<[a?: A, b?: B, c?: C, d?: D]>,
-  a?: (input: AnyIterable<A>) => AnyIterable<AA>,
-  b?: (input: AnyIterable<B>) => AnyIterable<BB>,
-  c?: (input: AnyIterable<C>) => AnyIterable<CC>,
-  d?: (input: AnyIterable<D>) => AnyIterable<DD>,
-  concurrency?: number
-): AsyncGenerator<T>;
-
-export function dispatch<T, A, B, C, D, AA, BB, CC, DD>(
-  splitter: (item: T) => MaybePromise<[a?: A, b?: B, c?: C, d?: D]>,
+  splitter: (item: T) => MaybePromise<readonly [a?: A, b?: B, c?: C, d?: D]>,
   a?: (input: AnyIterable<A>) => AnyIterable<AA>,
   b?: (input: AnyIterable<B>) => AnyIterable<BB>,
   c?: (input: AnyIterable<C>) => AnyIterable<CC>,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vitest } from 'vitest';
 import { concat, map } from '..';
 
-const trackConcurrency = (fn: (x: number) => Promise<number>) => {
+export const trackConcurrency = (fn: (x: number) => Promise<number>) => {
   const processed: number[] = [];
   let inFlight = 0;
   let maxInFlight = 0;

@@ -18,37 +18,25 @@ import { pubsub } from './pubsub';
  * @returns An object with iterator, generator, and push function to control the stream
  */
 export function writer<T, R>(
-  callback: (iterator: AnyIterable<T>) => AnyIterable<R>,
+  callback?: (iterator: AnyIterable<T>) => AnyIterable<R>,
   concurrency?: number
 ) {
   // create queue for incoming values
-  const { publish, consume, producing } = pubsub<T>(concurrency);
+  const { publish, consume, producing, consuming, output: loop, end } = pubsub<T>(concurrency);
 
-  let isDone = false;
+  let lastValue = 0;
 
   // initialize pipe to read from the queue
-  const stream = (async function* generator() {
-    while (!isDone || producing.size > 0) {
-      console.log('generator going again');
-      const value = await consume();
-      console.log('generator', value);
-      yield value;
-      console.log('generatorrrrr', value);
-    }
-  })();
-
-  const iterator = callback(stream);
+  const iterator = callback ? callback(loop()) : loop();
 
   return {
     [Symbol.asyncIterator]: () => toAsyncIterable(iterator),
-    publish,
-    end: () => {
-      isDone = true;
-      if (producing.size == 0) {
-        stream.return();
-      }
+    write: publish,
+    end: async () => {
+      end();
+      //  });
     },
-    write: async (value: T) => {
+    transform: async (value: T) => {
       // put value into queue
       await publish(value);
       if ('next' in iterator) {
@@ -60,6 +48,15 @@ export function writer<T, R>(
         // advance pipe iterator by one
         return n.value;
       }
+    },
+    start: async function () {
+      const values = [];
+      for await (const value of iterator) {
+        console.log('got value', value);
+        values.push(value);
+      }
+      console.log('stream done', values);
+      return values;
     },
   };
 }
