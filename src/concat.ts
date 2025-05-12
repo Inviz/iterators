@@ -93,6 +93,7 @@ async function* _concatConcurrently<T>(
       countBufferedValues(iterator, 0) == 0 &&
       producing.size < outputConcurrency
     ) {
+      //console.log('iterate this thing!', counters.size, active.size, producing.size);
       // % console.log('iterate this thing', producing.size, outputConcurrency);
       onNextIterator();
     }

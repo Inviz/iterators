@@ -114,7 +114,11 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
       onStart?.();
       while (true) {
         var valueReady = consume();
-        const result = await Promise.race([readComplete, readError, valueReady]);
+        const result = await new Promise<R | undefined>((accept, reject) => {
+          _onReadError = reject;
+          _onReadComplete = accept;
+          Promise.resolve(valueReady).then(accept, reject);
+        });
         //console.log('output result', [readComplete, readError, valueReady]);
         if (result === undefined) {
           if (producing.size) {
@@ -156,21 +160,18 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
   }
 
   let isDone = false;
-  let _onReadComplete: () => void;
-  let onReadError = (e: Error) => {};
-  let readError = new Promise<void>((resolve, reject) => {
-    onReadError = reject;
-  });
-
-  let readComplete = new Promise<void>((resolve, reject) => {
-    _onReadComplete = resolve;
-  });
-  const onReadComplete = () => {
+  let _onReadError = (e: Error) => {};
+  let _onReadComplete = () => {
+    return undefined;
+  };
+  let onReadError = (e: Error) => {
+    console.log('onReadError', e);
+    _onReadError(e);
+  };
+  let onReadComplete = () => {
+    console.log('onReadComplete');
     isDone = true;
     _onReadComplete();
-    readComplete = new Promise<void>((resolve, reject) => {
-      _onReadComplete = resolve;
-    });
   };
 
   return {
