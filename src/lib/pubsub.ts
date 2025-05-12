@@ -40,8 +40,22 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
       await wait();
     }
 
+    //console.log('publish', producing.size, bufferCapacity, value?.length);
+
     // Create a promise that will resolve when the value is consumed
     const promise = Promise.resolve(value).then(async value => {
+      //console.log(
+      //  'publish promise',
+      //  consuming.size,
+      //  producing.size,
+      //  bufferCapacity,
+      //  value?.length,
+      //  buffer?.size
+      //);
+      if (value == 'skip') {
+        producing.delete(promise);
+        return value;
+      }
       if (consuming.size === 0) {
         // value arrived ahead of consumer
         await new Promise<void>(resolve => {
@@ -101,6 +115,7 @@ export function pubsub<R, T = R>(bufferCapacity: number = Infinity) {
       while (true) {
         var valueReady = consume();
         const result = await Promise.race([readComplete, readError, valueReady]);
+        //console.log('output result', [readComplete, readError, valueReady]);
         if (result === undefined) {
           if (producing.size) {
             yield valueReady;

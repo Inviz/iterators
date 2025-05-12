@@ -48,11 +48,8 @@ export function writer<T, R>(
       // put value into queue
       await publish(value);
       if ('next' in iterator) {
-        console.log('call next');
         const next = iterator.next();
-        console.log('await next');
         const n = await next;
-        console.log('got next', n);
         // advance pipe iterator by one
         return n.value;
       }
@@ -60,10 +57,8 @@ export function writer<T, R>(
     start: async function () {
       const values = [];
       for await (const value of iterator) {
-        console.log('got value', value);
         values.push(value);
       }
-      console.log('stream done', values);
       return values;
     },
   };

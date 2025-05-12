@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { map } from '..';
+import { map, take } from '..';
 
 // Helper to create a delay function
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -266,5 +266,152 @@ describe.concurrent('map', () => {
     // Verify partial results were processed
     expect(results.sort((a, b) => a - b)).toEqual([2, 4]); // before error
     expect(processFn).toHaveBeenCalledTimes(4); // All items were attempted
+  });
+});
+
+describe.concurrent('take with map', () => {
+  it.concurrent('should stop map from consuming more input after limit is reached', async () => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const processed: number[] = [];
+    let consumedCount = 0;
+
+    // Create an async generator that tracks consumption
+    async function* generateItems() {
+      for (const item of items) {
+        consumedCount++;
+        yield item;
+      }
+    }
+
+    // Process function that takes time to simulate work
+    const processFn = async (x: number) => {
+      await delay(50);
+      processed.push(x);
+      return x * 2;
+    };
+
+    // Take only 3 items after mapping
+    const results: number[] = [];
+    for await (const result of take(map(generateItems(), processFn, 2), 3)) {
+      results.push(result);
+    }
+
+    // Verify we only processed 3 items
+    expect(results).toHaveLength(3);
+    expect(results.sort((a, b) => a - b)).toEqual([2, 4, 6]);
+
+    // Verify we only processed 3 items from the source, but consumed 6  (3 + 2 buffered  + 1 over the limit)
+    expect(consumedCount).toBe(6);
+    expect(processed).toHaveLength(3);
+  });
+
+  it.concurrent('should handle take with concurrent map operations', async () => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const processed: number[] = [];
+    let consumedCount = 0;
+
+    // Create an async generator that tracks consumption
+    async function* generateItems() {
+      for (const item of items) {
+        consumedCount++;
+        yield item;
+      }
+    }
+
+    // Process function that takes different times to simulate varying work
+    const processFn = async (x: number) => {
+      await delay(x * 20); // Different delays to test concurrent behavior
+      processed.push(x);
+      return x * 2;
+    };
+
+    // Take only 3 items after mapping with concurrency of 2
+    const results: number[] = [];
+    for await (const result of take(map(generateItems(), processFn, 2), 3)) {
+      results.push(result);
+    }
+
+    // Verify we only processed 3 items
+    expect(results).toHaveLength(3);
+    expect(processed).toHaveLength(3);
+
+    // Verify we only consumed 6 items from the source (3 + 2 buffer + 1 over the limit)
+    expect(consumedCount).toBe(6);
+  });
+
+  it.concurrent('should handle take with multiple map operations', async () => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const processed: number[] = [];
+    let consumedCount = 0;
+
+    // Create an async generator that tracks consumption
+    async function* generateItems() {
+      for (const item of items) {
+        consumedCount++;
+        yield item;
+      }
+    }
+
+    // First map: multiply by 2
+    const map1 = async (x: number) => {
+      await delay(20);
+      return x * 2;
+    };
+
+    // Second map: add 10
+    const map2 = async (x: number) => {
+      await delay(20);
+      processed.push(x);
+      return x + 10;
+    };
+
+    // Take only 3 items after two mapping operations
+    const results: number[] = [];
+    for await (const result of take(map(map(generateItems(), map1, 2), map2, 2), 3)) {
+      results.push(result);
+    }
+
+    // Verify we only processed 3 items
+    expect(results).toHaveLength(3);
+    expect(processed).toHaveLength(3);
+
+    // Verify we only consumed 3 items from the source (3 + 2 buffer x 2 + 1 over the limit)
+    expect(consumedCount).toBe(3 + 2 * 2 + 1);
+  });
+
+  it.concurrent('should handle take with map and backpressure', async () => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const processed: number[] = [];
+    let consumedCount = 0;
+    console.time('a');
+
+    // Create an async generator that tracks consumption
+    async function* generateItems() {
+      for (const item of items) {
+        consumedCount++;
+        yield item;
+      }
+    }
+
+    // Process function that takes time to simulate work
+    const processFn = async (x: number) => {
+      await delay(100);
+      processed.push(x);
+      return x * 2;
+    };
+
+    // Take only 3 items after mapping with concurrency of 2
+    const results: number[] = [];
+    for await (const result of take(map(generateItems(), processFn, 2), 3)) {
+      results.push(result);
+      await delay(50); // Simulate slow consumer
+    }
+
+    // Verify we only processed 4 items (3 target + 1 in over the limit)
+    expect(results).toHaveLength(3);
+    expect(processed).toHaveLength(3 + 1);
+
+    // Verify we only consumed 6 items from the source (3 + 2 buffer + 1 over the limit)
+    expect(consumedCount).toBe(3 + 2 + 1);
   });
 });

@@ -14,15 +14,11 @@ async function* _take<T>(input: AnyIterable<T>, count: number): AsyncGenerator<T
   if (count <= 0) return;
 
   let taken = 0;
-  debugger;
   for await (const value of input) {
-    console.log('take', taken, value);
     yield value;
     taken++;
-    console.log('take', taken);
     if (taken >= count) break;
   }
-  console.log('take done', taken);
 }
 
 /**
